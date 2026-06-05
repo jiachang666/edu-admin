@@ -274,6 +274,63 @@ export type DashboardOverview = {
   latestNotices: Notice[];
 };
 
+export type UserRole = {
+  id: number;
+  code: string;
+  name: string;
+};
+
+export type AccessUser = {
+  id: number;
+  username: string;
+  displayName: string;
+  mobile: string;
+  status: string;
+  lastLoginAt: string;
+  roles: UserRole[];
+  primaryRoleCode: string;
+  primaryRoleName: string;
+};
+
+export type AccessUserPayload = {
+  username: string;
+  password: string;
+  displayName: string;
+  mobile: string;
+  roleCode: string;
+  status: string;
+};
+
+export type AccessRole = {
+  id: number;
+  name: string;
+  code: string;
+  description: string;
+  status: string;
+  userCount: number;
+  permissionCount: number;
+  permissions: string[];
+};
+
+export type AccessRolePayload = {
+  name: string;
+  code: string;
+  description: string;
+  status: string;
+};
+
+export type OperationLog = {
+  id: number;
+  userId: number;
+  userName: string;
+  module: string;
+  action: string;
+  targetType: string;
+  targetId: number;
+  content: string;
+  createdAt: string;
+};
+
 async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>) {
   const response = await request;
   return response.data.data;
@@ -281,6 +338,58 @@ async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>) {
 
 export function fetchDashboardOverview() {
   return unwrap<DashboardOverview>(http.get("/dashboard/overview"));
+}
+
+export function fetchUserList() {
+  return unwrap<PagedResult<AccessUser>>(http.get("/users"));
+}
+
+export function createUser(payload: AccessUserPayload) {
+  return unwrap<AccessUser>(http.post("/users", payload));
+}
+
+export function updateUser(id: number, payload: AccessUserPayload) {
+  return unwrap<AccessUser>(http.patch(`/users/${id}`, payload));
+}
+
+export function enableUser(id: number) {
+  return unwrap<AccessUser>(http.post(`/users/${id}/enable`));
+}
+
+export function disableUser(id: number) {
+  return unwrap<AccessUser>(http.post(`/users/${id}/disable`));
+}
+
+export function fetchRoleList() {
+  return unwrap<PagedResult<AccessRole>>(http.get("/roles"));
+}
+
+export function fetchRoleDetail(id: number) {
+  return unwrap<{
+    role: AccessRole;
+    permissionGroups: Array<{
+      key: string;
+      label: string;
+      description: string;
+      permissions: Array<{ code: string; label: string; description: string }>;
+    }>;
+  }>(http.get(`/roles/${id}`));
+}
+
+export function createRole(payload: AccessRolePayload) {
+  return unwrap<AccessRole>(http.post("/roles", payload));
+}
+
+export function updateRole(id: number, payload: AccessRolePayload) {
+  return unwrap<AccessRole>(http.patch(`/roles/${id}`, payload));
+}
+
+export function saveRolePermissions(id: number, payload: { permissions: string[] }) {
+  return unwrap<AccessRole>(http.put(`/roles/${id}/permissions`, payload));
+}
+
+export function fetchOperationLogList() {
+  return unwrap<PagedResult<OperationLog>>(http.get("/operation-logs"));
 }
 
 export function fetchTeacherList() {

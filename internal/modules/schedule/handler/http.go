@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
 	"strings"
@@ -52,6 +53,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	if !permission.HasFromContext(c, "schedules:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	schedules, scheduleErr := h.service.Schedules()
 	if scheduleErr != nil {
 		response.InternalServerError(c)
@@ -62,6 +68,11 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 func (h *Handler) create(c *gin.Context) {
+	if !permission.HasFromContext(c, "schedules:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindSchedulePayload(c)
 	if !ok {
 		return
@@ -81,6 +92,11 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) detail(c *gin.Context) {
+	if !permission.HasFromContext(c, "schedules:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	schedule, found, scheduleErr := h.service.ScheduleDetail(c.Param("id"))
 	if scheduleErr != nil {
 		response.InternalServerError(c)
@@ -95,6 +111,11 @@ func (h *Handler) detail(c *gin.Context) {
 }
 
 func (h *Handler) update(c *gin.Context) {
+	if !permission.HasFromContext(c, "schedules:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindSchedulePayload(c)
 	if !ok {
 		return
@@ -114,6 +135,11 @@ func (h *Handler) update(c *gin.Context) {
 }
 
 func (h *Handler) reschedule(c *gin.Context) {
+	if !permission.HasFromContext(c, "schedules:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindScheduleActionPayload(c, true)
 	if !ok {
 		return
@@ -133,6 +159,11 @@ func (h *Handler) reschedule(c *gin.Context) {
 }
 
 func (h *Handler) cancel(c *gin.Context) {
+	if !permission.HasFromContext(c, "schedules:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindScheduleActionPayload(c, false)
 	if !ok {
 		return
@@ -152,6 +183,11 @@ func (h *Handler) cancel(c *gin.Context) {
 }
 
 func (h *Handler) makeup(c *gin.Context) {
+	if !permission.HasFromContext(c, "schedules:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindScheduleActionPayload(c, true)
 	if !ok {
 		return
@@ -171,6 +207,11 @@ func (h *Handler) makeup(c *gin.Context) {
 }
 
 func (h *Handler) attendance(c *gin.Context) {
+	if !permission.HasFromContext(c, "attendance:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	scheduleItem, found, scheduleErr := h.service.Schedule(c.Param("id"))
 	if scheduleErr != nil {
 		response.InternalServerError(c)
@@ -191,6 +232,11 @@ func (h *Handler) attendance(c *gin.Context) {
 }
 
 func (h *Handler) saveAttendance(c *gin.Context) {
+	if !permission.HasFromContext(c, "attendance:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	var payload eduservice.AttendanceSavePayload
 	bindErr := c.ShouldBindJSON(&payload)
 	if bindErr != nil {
@@ -212,6 +258,11 @@ func (h *Handler) saveAttendance(c *gin.Context) {
 }
 
 func (h *Handler) homework(c *gin.Context) {
+	if !permission.HasFromContext(c, "homeworks:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	item, found, itemErr := h.service.Homework(c.Param("id"))
 	if itemErr != nil {
 		response.InternalServerError(c)
@@ -226,6 +277,11 @@ func (h *Handler) homework(c *gin.Context) {
 }
 
 func (h *Handler) saveHomework(c *gin.Context) {
+	if !permission.HasFromContext(c, "homeworks:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	var payload eduservice.HomeworkPayload
 	bindErr := c.ShouldBindJSON(&payload)
 	if bindErr != nil {
@@ -247,6 +303,11 @@ func (h *Handler) saveHomework(c *gin.Context) {
 }
 
 func (h *Handler) feedback(c *gin.Context) {
+	if !permission.HasFromContext(c, "homeworks:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	item, found, itemErr := h.service.Feedback(c.Param("id"))
 	if itemErr != nil {
 		response.InternalServerError(c)
@@ -261,6 +322,11 @@ func (h *Handler) feedback(c *gin.Context) {
 }
 
 func (h *Handler) saveFeedback(c *gin.Context) {
+	if !permission.HasFromContext(c, "homeworks:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	var payload eduservice.FeedbackPayload
 	bindErr := c.ShouldBindJSON(&payload)
 	if bindErr != nil {

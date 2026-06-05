@@ -38,7 +38,13 @@ async function submit() {
 
   try {
     const result = await login(form);
-    authStore.setSession(result.accessToken, result.user.displayName);
+    authStore.setSession(
+      result.accessToken,
+      result.user,
+      result.roles,
+      result.roleNames,
+      result.permissions,
+    );
     await router.push("/dashboard");
     ElMessage.success("登录成功");
   } catch (error) {

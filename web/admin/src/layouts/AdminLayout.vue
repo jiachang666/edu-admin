@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  Avatar,
   Bell,
   Calendar,
   Checked,
@@ -10,6 +11,7 @@ import {
   Reading,
   School,
   SwitchButton,
+  Tickets,
   UserFilled,
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
@@ -24,54 +26,84 @@ const menus = [
     label: "首页总览",
     hint: "今天的班、课和待办",
     icon: House,
+    permission: "dashboard:view",
+  },
+  {
+    path: "/users",
+    label: "账号管理",
+    hint: "登录账号与启停状态",
+    icon: Avatar,
+    permission: "users:view",
+  },
+  {
+    path: "/roles",
+    label: "角色权限",
+    hint: "岗位能看什么、能做什么",
+    icon: Tickets,
+    permission: "roles:view",
+  },
+  {
+    path: "/operation-logs",
+    label: "操作记录",
+    hint: "回看关键操作轨迹",
+    icon: CollectionTag,
+    permission: "operation_logs:view",
   },
   {
     path: "/teachers",
     label: "老师",
     hint: "师资分布与授课负载",
     icon: UserFilled,
+    permission: "teachers:view",
   },
   {
     path: "/students",
     label: "学员",
     hint: "学员与家长台账",
     icon: Notebook,
+    permission: "students:view",
   },
   {
     path: "/courses",
     label: "课程",
     hint: "课程模板与适用阶段",
     icon: Reading,
+    permission: "courses:view",
   },
   {
     path: "/classes",
     label: "班级",
     hint: "班级组合与容量安排",
     icon: School,
+    permission: "classes:view",
   },
   {
     path: "/schedules",
     label: "排课",
     hint: "每天的上课节奏",
     icon: Calendar,
+    permission: "schedules:view",
   },
   {
     path: "/attendance",
     label: "签到",
     hint: "点名与历史回看",
     icon: Checked,
+    permission: "attendance:view",
   },
   {
     path: "/homeworks",
     label: "作业反馈",
     hint: "课后作业与班级反馈",
     icon: Memo,
+    permission: "homeworks:view",
   },
   {
     path: "/notices",
     label: "通知",
     hint: "消息发送与回看",
     icon: Bell,
+    permission: "notices:view",
   },
 ];
 
@@ -79,8 +111,12 @@ const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 
+const visibleMenus = computed(() => {
+  return menus.filter((menu) => authStore.hasPermission(menu.permission));
+});
+
 const activeMenu = computed(() => {
-  return menus.find((menu) => route.path.startsWith(menu.path)) ?? menus[0];
+  return visibleMenus.value.find((menu) => route.path.startsWith(menu.path)) ?? visibleMenus.value[0] ?? menus[0];
 });
 
 const pageTitle = computed(() => {
@@ -110,6 +146,10 @@ const userInitial = computed(() => {
   }
 
   return name.slice(0, 1).toUpperCase();
+});
+
+const roleLabel = computed(() => {
+  return authStore.roleNames[0] || "演示账号";
 });
 
 async function handleLogout() {
@@ -147,7 +187,7 @@ async function handleLogout() {
 
       <div class="nav-list">
         <RouterLink
-          v-for="menu in menus"
+          v-for="menu in visibleMenus"
           :key="menu.path"
           class="nav-link"
           :to="menu.path"
@@ -174,7 +214,9 @@ async function handleLogout() {
             <div class="sidebar-user-name">
               {{ authStore.userName || "System Admin" }}
             </div>
-            <div class="sidebar-user-caption">演示环境已就绪，可直接体验流程</div>
+            <div class="sidebar-user-caption">
+              {{ roleLabel }} · 当前菜单会按权限自动收起
+            </div>
           </div>
         </div>
 

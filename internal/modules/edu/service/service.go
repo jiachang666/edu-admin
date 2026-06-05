@@ -315,6 +315,10 @@ func (s *Service) Bootstrap(autoSeed bool) error {
 	}
 
 	migrateErr := s.db.AutoMigrate(
+		&edumodel.User{},
+		&edumodel.Role{},
+		&edumodel.UserRole{},
+		&edumodel.OperationLog{},
 		&edumodel.Teacher{},
 		&edumodel.Student{},
 		&edumodel.StudentGuardian{},
@@ -2790,12 +2794,17 @@ func (s *Service) seedIfEmpty() error {
 		return countErr
 	}
 
-	if teacherCount > 0 {
-		return nil
-	}
-
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
+		seedAccessErr := s.seedAccessControlIfEmpty(tx, now)
+		if seedAccessErr != nil {
+			return seedAccessErr
+		}
+
+		if teacherCount > 0 {
+			return nil
+		}
+
 		today := startOfDay(now)
 		tomorrow := today.AddDate(0, 0, 1)
 
