@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
 
@@ -20,6 +21,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	if !permission.HasFromContext(c, "homeworks:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	items, itemErr := h.service.Homeworks()
 	if itemErr != nil {
 		response.InternalServerError(c)

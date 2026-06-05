@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
 
@@ -21,6 +22,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	if !permission.HasFromContext(c, "attendance:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	items, itemErr := h.service.AttendanceSessions()
 	if itemErr != nil {
 		response.InternalServerError(c)
@@ -31,6 +37,11 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 func (h *Handler) update(c *gin.Context) {
+	if !permission.HasFromContext(c, "attendance:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	var payload eduservice.AttendanceSavePayload
 	bindErr := c.ShouldBindJSON(&payload)
 	if bindErr != nil {

@@ -17,6 +17,49 @@ type Teacher struct {
 	UpdatedAt      time.Time `gorm:"not null"`
 }
 
+type User struct {
+	ID           uint64     `gorm:"primaryKey"`
+	Username     string     `gorm:"size:64;not null;uniqueIndex"`
+	PasswordHash string     `gorm:"column:password_hash;size:255;not null"`
+	DisplayName  string     `gorm:"column:display_name;size:64;not null"`
+	Mobile       string     `gorm:"size:32"`
+	Status       string     `gorm:"size:32;not null;default:'启用'"`
+	LastLoginAt  *time.Time `gorm:"column:last_login_at"`
+	CreatedAt    time.Time  `gorm:"not null"`
+	UpdatedAt    time.Time  `gorm:"not null"`
+}
+
+type Role struct {
+	ID                  uint64    `gorm:"primaryKey"`
+	Name                string    `gorm:"size:64;not null"`
+	Code                string    `gorm:"size:64;not null;uniqueIndex"`
+	Description         string    `gorm:"size:255"`
+	Status              string    `gorm:"size:32;not null;default:'启用'"`
+	PermissionCodesJSON string    `gorm:"column:permission_codes_json;type:text"`
+	CreatedAt           time.Time `gorm:"not null"`
+	UpdatedAt           time.Time `gorm:"not null"`
+}
+
+type UserRole struct {
+	ID        uint64    `gorm:"primaryKey"`
+	UserID    uint64    `gorm:"column:user_id;not null;index;uniqueIndex:uk_user_role"`
+	RoleID    uint64    `gorm:"column:role_id;not null;index;uniqueIndex:uk_user_role"`
+	CreatedAt time.Time `gorm:"not null"`
+	UpdatedAt time.Time `gorm:"not null"`
+}
+
+type OperationLog struct {
+	ID              uint64    `gorm:"primaryKey"`
+	UserID          uint64    `gorm:"column:user_id;not null;index"`
+	UserDisplayName string    `gorm:"column:user_display_name;size:64;not null"`
+	Module          string    `gorm:"size:64;not null"`
+	Action          string    `gorm:"size:64;not null"`
+	TargetType      string    `gorm:"column:target_type;size:64;not null"`
+	TargetID        uint64    `gorm:"column:target_id;not null;default:0"`
+	Content         string    `gorm:"type:text;not null"`
+	CreatedAt       time.Time `gorm:"not null;index"`
+}
+
 type Student struct {
 	ID             uint64    `gorm:"primaryKey"`
 	Name           string    `gorm:"size:64;not null"`

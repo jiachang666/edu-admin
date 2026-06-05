@@ -14,6 +14,9 @@ import ScheduleDetailView from "../views/schedules/ScheduleDetailView.vue";
 import AttendanceView from "../views/attendance/AttendanceView.vue";
 import HomeworkView from "../views/homeworks/HomeworkView.vue";
 import NoticeListView from "../views/notices/NoticeListView.vue";
+import UserListView from "../views/users/UserListView.vue";
+import RoleListView from "../views/roles/RoleListView.vue";
+import OperationLogView from "../views/audit/OperationLogView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -41,6 +44,36 @@ const router = createRouter({
             title: "首页总览",
             eyebrow: "Operations Deck",
             description: "把今天的课程、待办、通知和班级节奏放在同一块总览板上。",
+          },
+        },
+        {
+          path: "users",
+          name: "users",
+          component: UserListView,
+          meta: {
+            title: "账号管理",
+            eyebrow: "Access Desk",
+            description: "统一管理后台账号、使用身份和启停状态，确保谁能进系统一目了然。",
+          },
+        },
+        {
+          path: "roles",
+          name: "roles",
+          component: RoleListView,
+          meta: {
+            title: "角色权限",
+            eyebrow: "Role Matrix",
+            description: "把不同岗位能看到什么、能操作什么收拢到同一张权限工作台里。",
+          },
+        },
+        {
+          path: "operation-logs",
+          name: "operation-logs",
+          component: OperationLogView,
+          meta: {
+            title: "操作记录",
+            eyebrow: "Audit Trail",
+            description: "回看关键操作是谁做的、做了什么、是什么时候发生的。",
           },
         },
         {
@@ -158,6 +191,54 @@ const router = createRouter({
   ],
 });
 
+function normalizePathSegment(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    return "/dashboard";
+  }
+
+  return `/${segments[0]}`;
+}
+
+const routePermissionMap: Record<string, string> = {
+  "/dashboard": "dashboard:view",
+  "/users": "users:view",
+  "/roles": "roles:view",
+  "/operation-logs": "operation_logs:view",
+  "/teachers": "teachers:view",
+  "/students": "students:view",
+  "/courses": "courses:view",
+  "/classes": "classes:view",
+  "/schedules": "schedules:view",
+  "/attendance": "attendance:view",
+  "/homeworks": "homeworks:view",
+  "/notices": "notices:view",
+};
+
+function firstAllowedPath(authStore: ReturnType<typeof useAuthStore>) {
+  const orderedPaths = [
+    "/dashboard",
+    "/users",
+    "/roles",
+    "/operation-logs",
+    "/teachers",
+    "/students",
+    "/courses",
+    "/classes",
+    "/schedules",
+    "/attendance",
+    "/homeworks",
+    "/notices",
+  ];
+
+  const matchedPath = orderedPaths.find((path) => {
+    const permission = routePermissionMap[path];
+    return !permission || authStore.hasPermission(permission);
+  });
+
+  return matchedPath ?? "/dashboard";
+}
+
 router.beforeEach((to) => {
   const authStore = useAuthStore();
   const isLoginPage = to.path === "/login";
@@ -168,6 +249,24 @@ router.beforeEach((to) => {
 
   if (isLoginPage && authStore.isLoggedIn) {
     return "/dashboard";
+  }
+
+  if (!isLoginPage && authStore.token && authStore.permissions.length === 0) {
+    return authStore
+      .hydrateSession()
+      .then(() => true)
+      .catch(() => {
+        authStore.clearSession();
+        return "/login";
+      });
+  }
+
+  if (!isLoginPage) {
+    const basePath = normalizePathSegment(to.path);
+    const requiredPermission = routePermissionMap[basePath];
+    if (requiredPermission && !authStore.hasPermission(requiredPermission)) {
+      return firstAllowedPath(authStore);
+    }
   }
 
   return true;

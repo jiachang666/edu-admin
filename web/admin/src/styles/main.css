@@ -870,6 +870,39 @@ a {
   line-height: 1.7;
 }
 
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.permission-grid .el-checkbox {
+  display: flex;
+  align-items: flex-start;
+  margin-right: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.permission-grid .el-checkbox__label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  white-space: normal;
+}
+
+.permission-label {
+  font-weight: 700;
+}
+
+.permission-grid small {
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
 .class-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1396,7 +1429,8 @@ a {
   .dialog-grid,
   .class-detail-grid,
   .student-detail-grid,
-  .quick-actions-grid {
+  .quick-actions-grid,
+  .permission-grid {
     grid-template-columns: 1fr;
   }
 

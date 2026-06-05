@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
 	"strings"
@@ -36,6 +37,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	if !permission.HasFromContext(c, "notices:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	notices, noticeErr := h.service.Notices()
 	if noticeErr != nil {
 		response.InternalServerError(c)
@@ -46,6 +52,11 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 func (h *Handler) create(c *gin.Context) {
+	if !permission.HasFromContext(c, "notices:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindNoticePayload(c)
 	if !ok {
 		return
@@ -61,6 +72,11 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) detail(c *gin.Context) {
+	if !permission.HasFromContext(c, "notices:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	notice, found, noticeErr := h.service.Notice(c.Param("id"))
 	if noticeErr != nil {
 		response.InternalServerError(c)
@@ -75,6 +91,11 @@ func (h *Handler) detail(c *gin.Context) {
 }
 
 func (h *Handler) update(c *gin.Context) {
+	if !permission.HasFromContext(c, "notices:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindNoticePayload(c)
 	if !ok {
 		return
@@ -94,6 +115,11 @@ func (h *Handler) update(c *gin.Context) {
 }
 
 func (h *Handler) send(c *gin.Context) {
+	if !permission.HasFromContext(c, "notices:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	sentItem, found, sendErr := h.service.SendNotice(c.Param("id"))
 	if sendErr != nil {
 		response.InternalServerError(c)
@@ -108,6 +134,11 @@ func (h *Handler) send(c *gin.Context) {
 }
 
 func (h *Handler) targets(c *gin.Context) {
+	if !permission.HasFromContext(c, "notices:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	targets, targetErr := h.service.NoticeTargets(c.Param("id"))
 	if targetErr != nil {
 		response.InternalServerError(c)

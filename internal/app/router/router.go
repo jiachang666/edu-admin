@@ -39,15 +39,15 @@ func New(cfg *config.Config, logger *log.Logger, eduSvc *eduservice.Service) *gi
 
 	api := engine.Group("/api/v1")
 
-	authSvc := authservice.New(cfg.DevAuthToken)
+	authSvc := authservice.New(cfg.DevAuthToken, eduSvc)
 	authhandler.New(authSvc).RegisterRoutes(api.Group("/auth"))
 
 	secured := api.Group("/")
-	secured.Use(middleware.RequireAuth(cfg.DevAuthToken))
+	secured.Use(middleware.RequireAuth(authSvc))
 
 	dashboardhandler.New(dashboardservice.New(eduSvc)).RegisterRoutes(secured.Group("/dashboard"))
-	userhandler.New().RegisterRoutes(secured.Group("/users"))
-	rolehandler.New().RegisterRoutes(secured.Group("/roles"))
+	userhandler.New(eduSvc).RegisterRoutes(secured.Group("/users"))
+	rolehandler.New(eduSvc).RegisterRoutes(secured.Group("/roles"))
 	teacherhandler.New(eduSvc).RegisterRoutes(secured.Group("/teachers"))
 	studenthandler.New(eduSvc).RegisterRoutes(secured.Group("/students"))
 	coursehandler.New(eduSvc).RegisterRoutes(secured.Group("/courses"))
@@ -56,7 +56,7 @@ func New(cfg *config.Config, logger *log.Logger, eduSvc *eduservice.Service) *gi
 	attendancehandler.New(eduSvc).RegisterRoutes(secured.Group("/attendance"))
 	homeworkhandler.New(eduSvc).RegisterRoutes(secured.Group("/homeworks"))
 	noticehandler.New(eduSvc).RegisterRoutes(secured.Group("/notices"))
-	audithandler.New().RegisterRoutes(secured.Group("/operation-logs"))
+	audithandler.New(eduSvc).RegisterRoutes(secured.Group("/operation-logs"))
 
 	return engine
 }
