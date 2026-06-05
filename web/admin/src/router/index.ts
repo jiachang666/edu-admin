@@ -7,6 +7,7 @@ import TeacherListView from "../views/teachers/TeacherListView.vue";
 import StudentListView from "../views/students/StudentListView.vue";
 import CourseListView from "../views/courses/CourseListView.vue";
 import ClassListView from "../views/classes/ClassListView.vue";
+import ClassDetailView from "../views/classes/ClassDetailView.vue";
 import ScheduleListView from "../views/schedules/ScheduleListView.vue";
 import AttendanceView from "../views/attendance/AttendanceView.vue";
 import HomeworkView from "../views/homeworks/HomeworkView.vue";
@@ -78,6 +79,16 @@ const router = createRouter({
             title: "班级管理",
             eyebrow: "Classroom Matrix",
             description: "关注班级组合、容量安排和固定上课节奏。",
+          },
+        },
+        {
+          path: "classes/:id",
+          name: "class-detail",
+          component: ClassDetailView,
+          meta: {
+            title: "班级详情",
+            eyebrow: "Class Hub",
+            description: "把班级里的学员、排课、签到、作业和通知收进同一个业务中心页。",
           },
         },
         {

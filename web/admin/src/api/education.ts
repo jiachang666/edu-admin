@@ -75,6 +75,15 @@ export type SchoolClass = {
   status: string;
 };
 
+export type ClassDetail = {
+  class: SchoolClass;
+  students: Student[];
+  upcomingSchedules: Schedule[];
+  recentAttendance: AttendanceSession[];
+  recentHomeworks: Homework[];
+  recentNotices: Notice[];
+};
+
 export type Schedule = {
   id: number;
   classId: number;
@@ -223,6 +232,18 @@ export function fetchStudentList() {
 
 export function fetchClassList() {
   return unwrap<PagedResult<SchoolClass>>(http.get("/classes"));
+}
+
+export function fetchClassDetail(classId: number) {
+  return unwrap<ClassDetail>(http.get(`/classes/${classId}`));
+}
+
+export function addStudentsToClass(classId: number, payload: { studentIds: number[] }) {
+  return unwrap<{ added: boolean }>(http.post(`/classes/${classId}/students`, payload));
+}
+
+export function removeStudentFromClass(classId: number, studentId: number) {
+  return unwrap<{ removed: boolean }>(http.delete(`/classes/${classId}/students/${studentId}`));
 }
 
 export function fetchScheduleList() {
