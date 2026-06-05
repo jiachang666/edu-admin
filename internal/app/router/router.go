@@ -5,14 +5,15 @@ import (
 
 	"edu-admin/internal/app/config"
 	"edu-admin/internal/app/middleware"
+	attendancehandler "edu-admin/internal/modules/attendance/handler"
+	audithandler "edu-admin/internal/modules/audit/handler"
 	authhandler "edu-admin/internal/modules/auth/handler"
 	authservice "edu-admin/internal/modules/auth/service"
-	audithandler "edu-admin/internal/modules/audit/handler"
-	attendancehandler "edu-admin/internal/modules/attendance/handler"
 	classhandler "edu-admin/internal/modules/class/handler"
 	coursehandler "edu-admin/internal/modules/course/handler"
 	dashboardhandler "edu-admin/internal/modules/dashboard/handler"
 	dashboardservice "edu-admin/internal/modules/dashboard/service"
+	eduservice "edu-admin/internal/modules/edu/service"
 	homeworkhandler "edu-admin/internal/modules/homework/handler"
 	noticehandler "edu-admin/internal/modules/notice/handler"
 	rolehandler "edu-admin/internal/modules/role/handler"
@@ -24,8 +25,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func New(cfg *config.Config, logger *log.Logger) *gin.Engine {
+func New(cfg *config.Config, logger *log.Logger, eduSvc *eduservice.Service) *gin.Engine {
 	engine := gin.New()
+	trustedProxyErr := engine.SetTrustedProxies(nil)
+	if trustedProxyErr != nil {
+		logger.Printf("set trusted proxies failed: %v", trustedProxyErr)
+	}
 	engine.Use(middleware.RequestID(), middleware.Logger(logger), middleware.Recovery())
 
 	engine.GET("/healthz", func(c *gin.Context) {
@@ -40,17 +45,17 @@ func New(cfg *config.Config, logger *log.Logger) *gin.Engine {
 	secured := api.Group("/")
 	secured.Use(middleware.RequireAuth(cfg.DevAuthToken))
 
-	dashboardhandler.New(dashboardservice.New()).RegisterRoutes(secured.Group("/dashboard"))
+	dashboardhandler.New(dashboardservice.New(eduSvc)).RegisterRoutes(secured.Group("/dashboard"))
 	userhandler.New().RegisterRoutes(secured.Group("/users"))
 	rolehandler.New().RegisterRoutes(secured.Group("/roles"))
-	teacherhandler.New().RegisterRoutes(secured.Group("/teachers"))
-	studenthandler.New().RegisterRoutes(secured.Group("/students"))
+	teacherhandler.New(eduSvc).RegisterRoutes(secured.Group("/teachers"))
+	studenthandler.New(eduSvc).RegisterRoutes(secured.Group("/students"))
 	coursehandler.New().RegisterRoutes(secured.Group("/courses"))
-	classhandler.New().RegisterRoutes(secured.Group("/classes"))
-	schedulehandler.New().RegisterRoutes(secured.Group("/schedules"))
+	classhandler.New(eduSvc).RegisterRoutes(secured.Group("/classes"))
+	schedulehandler.New(eduSvc).RegisterRoutes(secured.Group("/schedules"))
 	attendancehandler.New().RegisterRoutes(secured.Group("/attendance"))
 	homeworkhandler.New().RegisterRoutes(secured.Group("/homeworks"))
-	noticehandler.New().RegisterRoutes(secured.Group("/notices"))
+	noticehandler.New(eduSvc).RegisterRoutes(secured.Group("/notices"))
 	audithandler.New().RegisterRoutes(secured.Group("/operation-logs"))
 
 	return engine

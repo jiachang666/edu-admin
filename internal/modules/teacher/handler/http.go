@@ -2,14 +2,18 @@ package handler
 
 import (
 	"edu-admin/internal/app/response"
-	"edu-admin/internal/modules/demo"
+	eduservice "edu-admin/internal/modules/edu/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{}
+type Handler struct {
+	service *eduservice.Service
+}
 
-func New() *Handler { return &Handler{} }
+func New(service *eduservice.Service) *Handler {
+	return &Handler{service: service}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.list)
@@ -20,7 +24,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
-	response.Paginated(c, demo.Teachers())
+	teachers, teacherErr := h.service.Teachers()
+	if teacherErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	response.Paginated(c, teachers)
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -28,11 +38,21 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) options(c *gin.Context) {
-	response.Success(c, demo.TeacherOptions())
+	options, optionErr := h.service.TeacherOptions()
+	if optionErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	response.Success(c, options)
 }
 
 func (h *Handler) detail(c *gin.Context) {
-	teacher, found := demo.FindTeacher(c.Param("id"))
+	teacher, found, teacherErr := h.service.Teacher(c.Param("id"))
+	if teacherErr != nil {
+		response.InternalServerError(c)
+		return
+	}
 	if !found {
 		response.Success(c, gin.H{"id": c.Param("id")})
 		return

@@ -5,6 +5,7 @@ import (
 
 	"edu-admin/internal/app/config"
 	"edu-admin/internal/app/router"
+	eduservice "edu-admin/internal/modules/edu/service"
 	"edu-admin/internal/platform/authz"
 	"edu-admin/internal/platform/db"
 	xlogger "edu-admin/internal/platform/logger"
@@ -30,8 +31,14 @@ func NewApplication() (*Application, error) {
 		return nil, err
 	}
 
+	eduSvc := eduservice.New(dbConn)
+	bootstrapErr := eduSvc.Bootstrap(cfg.MySQLAutoSeed)
+	if bootstrapErr != nil {
+		return nil, bootstrapErr
+	}
+
 	enforcer := authz.NewNoopEnforcer()
-	engine := router.New(cfg, logger)
+	engine := router.New(cfg, logger, eduSvc)
 
 	return &Application{
 		Config:   cfg,

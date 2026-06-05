@@ -1,13 +1,15 @@
 package service
 
-import "edu-admin/internal/modules/demo"
+import eduservice "edu-admin/internal/modules/edu/service"
 
-type Service struct{}
-
-func New() *Service {
-	return &Service{}
+type Service struct {
+	eduService *eduservice.Service
 }
 
-func (s *Service) Overview() map[string]any {
-	return demo.Overview()
+func New(eduService *eduservice.Service) *Service {
+	return &Service{eduService: eduService}
+}
+
+func (s *Service) Overview() (map[string]any, error) {
+	return s.eduService.Overview()
 }

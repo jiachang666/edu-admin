@@ -20,5 +20,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) overview(c *gin.Context) {
-	response.Success(c, h.service.Overview())
+	overview, overviewErr := h.service.Overview()
+	if overviewErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	response.Success(c, overview)
 }

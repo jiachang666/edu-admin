@@ -32,6 +32,18 @@ func Unauthorized(c *gin.Context) {
 	})
 }
 
+func Failed(c *gin.Context, statusCode int, message string) {
+	c.JSON(statusCode, gin.H{
+		"code":      statusCode,
+		"message":   message,
+		"requestId": c.GetString("request_id"),
+	})
+}
+
+func InternalServerError(c *gin.Context) {
+	Failed(c, 500, "internal server error")
+}
+
 func NotImplemented(c *gin.Context) {
 	c.JSON(501, gin.H{
 		"code":      501,

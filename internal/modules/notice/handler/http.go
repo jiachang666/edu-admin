@@ -2,14 +2,18 @@ package handler
 
 import (
 	"edu-admin/internal/app/response"
-	"edu-admin/internal/modules/demo"
+	eduservice "edu-admin/internal/modules/edu/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{}
+type Handler struct {
+	service *eduservice.Service
+}
 
-func New() *Handler { return &Handler{} }
+func New(service *eduservice.Service) *Handler {
+	return &Handler{service: service}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.list)
@@ -21,7 +25,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
-	response.Paginated(c, demo.Notices())
+	notices, noticeErr := h.service.Notices()
+	if noticeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	response.Paginated(c, notices)
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -29,7 +39,11 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) detail(c *gin.Context) {
-	notice, found := demo.FindNotice(c.Param("id"))
+	notice, found, noticeErr := h.service.Notice(c.Param("id"))
+	if noticeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
 	if !found {
 		response.Success(c, gin.H{"id": c.Param("id")})
 		return
@@ -47,5 +61,11 @@ func (h *Handler) send(c *gin.Context) {
 }
 
 func (h *Handler) targets(c *gin.Context) {
-	response.Success(c, demo.NoticeTargets(c.Param("id")))
+	targets, targetErr := h.service.NoticeTargets(c.Param("id"))
+	if targetErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	response.Success(c, targets)
 }

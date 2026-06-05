@@ -2,14 +2,18 @@ package handler
 
 import (
 	"edu-admin/internal/app/response"
-	"edu-admin/internal/modules/demo"
+	eduservice "edu-admin/internal/modules/edu/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{}
+type Handler struct {
+	service *eduservice.Service
+}
 
-func New() *Handler { return &Handler{} }
+func New(service *eduservice.Service) *Handler {
+	return &Handler{service: service}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.list)
@@ -28,7 +32,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
-	response.Paginated(c, demo.Schedules())
+	schedules, scheduleErr := h.service.Schedules()
+	if scheduleErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	response.Paginated(c, schedules)
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -36,7 +46,11 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) detail(c *gin.Context) {
-	schedule, found := demo.FindSchedule(c.Param("id"))
+	schedule, found, scheduleErr := h.service.Schedule(c.Param("id"))
+	if scheduleErr != nil {
+		response.InternalServerError(c)
+		return
+	}
 	if !found {
 		response.Success(c, gin.H{"id": c.Param("id")})
 		return
@@ -62,7 +76,13 @@ func (h *Handler) makeup(c *gin.Context) {
 }
 
 func (h *Handler) attendance(c *gin.Context) {
-	response.Success(c, gin.H{"items": demo.Attendance(c.Param("id"))})
+	items, itemErr := h.service.Attendance(c.Param("id"))
+	if itemErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	response.Success(c, gin.H{"items": items})
 }
 
 func (h *Handler) saveAttendance(c *gin.Context) {
