@@ -135,12 +135,43 @@ export type Schedule = {
   classId: number;
   className: string;
   courseName: string;
+  teacherId: number;
   teacherName: string;
   campus: string;
   classroom: string;
+  scheduleType: string;
   lessonDate: string;
   lessonTime: string;
   attendanceStatus: string;
+  remark: string;
+};
+
+export type SchedulePayload = {
+  classId: number;
+  scheduleType: string;
+  lessonDate: string;
+  startTime: string;
+  endTime: string;
+  classroom: string;
+  remark: string;
+};
+
+export type ScheduleActionPayload = {
+  lessonDate: string;
+  startTime: string;
+  endTime: string;
+  classroom: string;
+  remark: string;
+};
+
+export type ScheduleDetail = {
+  schedule: Schedule;
+  class: SchoolClass;
+  students: Student[];
+  attendance: AttendanceSession;
+  homework?: Homework;
+  feedback?: Feedback;
+  relatedNotices: Notice[];
 };
 
 export type Notice = {
@@ -298,6 +329,30 @@ export function removeStudentFromClass(classId: number, studentId: number) {
 
 export function fetchScheduleList() {
   return unwrap<PagedResult<Schedule>>(http.get("/schedules"));
+}
+
+export function createSchedule(payload: SchedulePayload) {
+  return unwrap<Schedule>(http.post("/schedules", payload));
+}
+
+export function fetchScheduleDetail(scheduleId: number) {
+  return unwrap<ScheduleDetail>(http.get(`/schedules/${scheduleId}`));
+}
+
+export function updateSchedule(scheduleId: number, payload: SchedulePayload) {
+  return unwrap<Schedule>(http.patch(`/schedules/${scheduleId}`, payload));
+}
+
+export function rescheduleLesson(scheduleId: number, payload: ScheduleActionPayload) {
+  return unwrap<Schedule>(http.post(`/schedules/${scheduleId}/reschedule`, payload));
+}
+
+export function cancelLesson(scheduleId: number, payload: { remark: string }) {
+  return unwrap<Schedule>(http.post(`/schedules/${scheduleId}/cancel`, payload));
+}
+
+export function createMakeupLesson(scheduleId: number, payload: ScheduleActionPayload) {
+  return unwrap<Schedule>(http.post(`/schedules/${scheduleId}/makeup`, payload));
 }
 
 export function fetchNoticeList() {
