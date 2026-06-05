@@ -82,6 +82,42 @@ type StudentItem struct {
 	Status         string `json:"status"`
 }
 
+type StudentProfile struct {
+	ID             uint64 `json:"id"`
+	Name           string `json:"name"`
+	Gender         string `json:"gender"`
+	SchoolName     string `json:"schoolName"`
+	Grade          string `json:"grade"`
+	ParentName     string `json:"parentName"`
+	ParentMobile   string `json:"parentMobile"`
+	Campus         string `json:"campus"`
+	RemainingHours int    `json:"remainingHours"`
+	Status         string `json:"status"`
+	Remark         string `json:"remark"`
+}
+
+type StudentGuardianItem struct {
+	ID        uint64 `json:"id"`
+	Name      string `json:"name"`
+	Relation  string `json:"relation"`
+	Mobile    string `json:"mobile"`
+	IsPrimary bool   `json:"isPrimary"`
+}
+
+type StudentAttendanceRecord struct {
+	ScheduleID  uint64 `json:"scheduleId"`
+	ClassID     uint64 `json:"classId"`
+	ClassName   string `json:"className"`
+	CourseName  string `json:"courseName"`
+	TeacherName string `json:"teacherName"`
+	Campus      string `json:"campus"`
+	Classroom   string `json:"classroom"`
+	LessonDate  string `json:"lessonDate"`
+	LessonTime  string `json:"lessonTime"`
+	Status      string `json:"status"`
+	Remark      string `json:"remark"`
+}
+
 type ClassItem struct {
 	ID             uint64 `json:"id"`
 	Name           string `json:"name"`
@@ -93,6 +129,16 @@ type ClassItem struct {
 	Capacity       int    `json:"capacity"`
 	WeeklySchedule string `json:"weeklySchedule" gorm:"column:weekly_schedule"`
 	Status         string `json:"status"`
+}
+
+type StudentDetail struct {
+	Student          StudentProfile            `json:"student"`
+	Guardians        []StudentGuardianItem     `json:"guardians"`
+	Classes          []ClassItem               `json:"classes"`
+	RecentSchedules  []ScheduleItem            `json:"recentSchedules"`
+	RecentAttendance []StudentAttendanceRecord `json:"recentAttendance"`
+	RecentHomeworks  []HomeworkItem            `json:"recentHomeworks"`
+	RecentFeedbacks  []FeedbackItem            `json:"recentFeedbacks"`
 }
 
 type ClassDetail struct {
@@ -568,8 +614,13 @@ SELECT
 FROM students AS s
 LEFT JOIN student_guardians AS g
   ON g.student_id = s.id AND g.is_primary = 1
-LEFT JOIN class_students AS cs
-  ON cs.student_id = s.id AND cs.status = ?
+LEFT JOIN (
+  SELECT student_id, MIN(class_id) AS class_id
+  FROM class_students
+  WHERE status = ?
+  GROUP BY student_id
+) AS cs
+  ON cs.student_id = s.id
 LEFT JOIN classes AS c
   ON c.id = cs.class_id
 ORDER BY s.id ASC
@@ -604,8 +655,13 @@ SELECT
 FROM students AS s
 LEFT JOIN student_guardians AS g
   ON g.student_id = s.id AND g.is_primary = 1
-LEFT JOIN class_students AS cs
-  ON cs.student_id = s.id AND cs.status = ?
+LEFT JOIN (
+  SELECT student_id, MIN(class_id) AS class_id
+  FROM class_students
+  WHERE status = ?
+  GROUP BY student_id
+) AS cs
+  ON cs.student_id = s.id
 LEFT JOIN classes AS c
   ON c.id = cs.class_id
 WHERE s.id = ?
@@ -623,6 +679,205 @@ LIMIT 1
 	}
 
 	return item, true, nil
+}
+
+func (s *Service) StudentGuardians(rawStudentID string) ([]StudentGuardianItem, error) {
+	if s.db == nil {
+		studentItem, found, studentErr := s.Student(rawStudentID)
+		if studentErr != nil {
+			return nil, studentErr
+		}
+		if !found || (studentItem.ParentName == "" && studentItem.ParentMobile == "") {
+			return []StudentGuardianItem{}, nil
+		}
+
+		return []StudentGuardianItem{
+			{
+				ID:        studentItem.ID,
+				Name:      studentItem.ParentName,
+				Relation:  guardianRelationFromName(studentItem.ParentName),
+				Mobile:    studentItem.ParentMobile,
+				IsPrimary: true,
+			},
+		}, nil
+	}
+
+	query := `
+SELECT
+  id,
+  name,
+  COALESCE(relation, '') AS relation,
+  mobile,
+  is_primary
+FROM student_guardians
+WHERE student_id = ?
+ORDER BY is_primary DESC, id ASC
+`
+
+	var items []StudentGuardianItem
+	listErr := s.db.Raw(query, rawStudentID).Scan(&items).Error
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	return items, nil
+}
+
+func (s *Service) StudentDetail(rawStudentID string) (StudentDetail, bool, error) {
+	const recentItemLimit = 4
+
+	studentProfile, found, profileErr := s.studentProfile(rawStudentID)
+	if profileErr != nil {
+		return StudentDetail{}, false, profileErr
+	}
+	if !found {
+		return StudentDetail{}, false, nil
+	}
+
+	guardians, guardianErr := s.StudentGuardians(rawStudentID)
+	if guardianErr != nil {
+		return StudentDetail{}, false, guardianErr
+	}
+
+	classes, classErr := s.StudentClasses(rawStudentID)
+	if classErr != nil {
+		return StudentDetail{}, false, classErr
+	}
+
+	classIDs := make(map[uint64]bool, len(classes))
+	for _, classItem := range classes {
+		classIDs[classItem.ID] = true
+	}
+
+	recentSchedules := make([]ScheduleItem, 0, recentItemLimit)
+	recentAttendance := make([]StudentAttendanceRecord, 0, recentItemLimit)
+	if len(classIDs) > 0 {
+		schedules, scheduleErr := s.Schedules()
+		if scheduleErr != nil {
+			return StudentDetail{}, false, scheduleErr
+		}
+
+		for index := len(schedules) - 1; index >= 0; index-- {
+			scheduleItem := schedules[index]
+			if !classIDs[scheduleItem.ClassID] {
+				continue
+			}
+
+			recentSchedules = append(recentSchedules, scheduleItem)
+
+			attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+			if attendanceErr != nil {
+				return StudentDetail{}, false, attendanceErr
+			}
+
+			for _, attendanceItem := range attendanceItems {
+				if attendanceItem.StudentID != studentProfile.ID {
+					continue
+				}
+
+				recentAttendance = append(recentAttendance, StudentAttendanceRecord{
+					ScheduleID:  scheduleItem.ID,
+					ClassID:     scheduleItem.ClassID,
+					ClassName:   scheduleItem.ClassName,
+					CourseName:  scheduleItem.CourseName,
+					TeacherName: scheduleItem.TeacherName,
+					Campus:      scheduleItem.Campus,
+					Classroom:   scheduleItem.Classroom,
+					LessonDate:  scheduleItem.LessonDate,
+					LessonTime:  scheduleItem.LessonTime,
+					Status:      attendanceItem.Status,
+					Remark:      attendanceItem.Remark,
+				})
+				break
+			}
+
+			if len(recentSchedules) >= recentItemLimit {
+				break
+			}
+		}
+	}
+
+	homeworks, homeworkErr := s.Homeworks()
+	if homeworkErr != nil {
+		return StudentDetail{}, false, homeworkErr
+	}
+
+	recentHomeworks := make([]HomeworkItem, 0, recentItemLimit)
+	for _, item := range homeworks {
+		if !classIDs[item.ClassID] {
+			continue
+		}
+
+		recentHomeworks = append(recentHomeworks, item)
+		if len(recentHomeworks) >= recentItemLimit {
+			break
+		}
+	}
+
+	feedbacks, feedbackErr := s.Feedbacks()
+	if feedbackErr != nil {
+		return StudentDetail{}, false, feedbackErr
+	}
+
+	recentFeedbacks := make([]FeedbackItem, 0, recentItemLimit)
+	for _, item := range feedbacks {
+		if !classIDs[item.ClassID] {
+			continue
+		}
+
+		recentFeedbacks = append(recentFeedbacks, item)
+		if len(recentFeedbacks) >= recentItemLimit {
+			break
+		}
+	}
+
+	return StudentDetail{
+		Student:          studentProfile,
+		Guardians:        guardians,
+		Classes:          classes,
+		RecentSchedules:  recentSchedules,
+		RecentAttendance: recentAttendance,
+		RecentHomeworks:  recentHomeworks,
+		RecentFeedbacks:  recentFeedbacks,
+	}, true, nil
+}
+
+func (s *Service) studentProfile(rawStudentID string) (StudentProfile, bool, error) {
+	studentItem, found, studentErr := s.Student(rawStudentID)
+	if studentErr != nil {
+		return StudentProfile{}, false, studentErr
+	}
+	if !found {
+		return StudentProfile{}, false, nil
+	}
+
+	if s.db == nil {
+		return studentProfileFromStudentItem(studentItem, "", "", ""), true, nil
+	}
+
+	query := `
+SELECT
+  COALESCE(gender, '') AS gender,
+  COALESCE(school_name, '') AS school_name,
+  COALESCE(remark, '') AS remark
+FROM students
+WHERE id = ?
+LIMIT 1
+`
+
+	type studentProfileRow struct {
+		Gender     string `gorm:"column:gender"`
+		SchoolName string `gorm:"column:school_name"`
+		Remark     string `gorm:"column:remark"`
+	}
+
+	var row studentProfileRow
+	profileErr := s.db.Raw(query, rawStudentID).Scan(&row).Error
+	if profileErr != nil {
+		return StudentProfile{}, false, profileErr
+	}
+
+	return studentProfileFromStudentItem(studentItem, row.SchoolName, row.Gender, row.Remark), true, nil
 }
 
 func (s *Service) StudentClasses(rawStudentID string) ([]ClassItem, error) {
@@ -2370,6 +2625,27 @@ func studentItemFromDemo(rawID string) (StudentItem, bool, error) {
 	}, true, nil
 }
 
+func studentProfileFromStudentItem(
+	studentItem StudentItem,
+	schoolName string,
+	gender string,
+	remark string,
+) StudentProfile {
+	return StudentProfile{
+		ID:             studentItem.ID,
+		Name:           studentItem.Name,
+		Gender:         gender,
+		SchoolName:     schoolName,
+		Grade:          studentItem.Grade,
+		ParentName:     studentItem.ParentName,
+		ParentMobile:   studentItem.ParentMobile,
+		Campus:         studentItem.Campus,
+		RemainingHours: studentItem.RemainingHours,
+		Status:         studentItem.Status,
+		Remark:         remark,
+	}
+}
+
 func classItemsFromDemo(source []demo.Class) []ClassItem {
 	items := make([]ClassItem, 0, len(source))
 	for _, item := range source {
@@ -2673,6 +2949,17 @@ func normalizeHomeworkStatus(status string) string {
 		return strings.TrimSpace(status)
 	default:
 		return ""
+	}
+}
+
+func guardianRelationFromName(name string) string {
+	switch {
+	case strings.Contains(name, "先生"):
+		return "父亲"
+	case strings.Contains(name, "女士"):
+		return "母亲"
+	default:
+		return "家长"
 	}
 }
 

@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { fetchStudentList, type Student } from "../../api/education";
+
+const router = useRouter();
 
 const loading = ref(false);
 const students = ref<Student[]>([]);
@@ -32,6 +35,10 @@ async function loadStudents() {
   } finally {
     loading.value = false;
   }
+}
+
+function openStudentDetail(studentId: number) {
+  void router.push(`/students/${studentId}`);
 }
 
 onMounted(() => {
@@ -85,7 +92,13 @@ onMounted(() => {
 
       <div class="data-table-shell">
         <el-table v-loading="loading" :data="students" stripe>
-          <el-table-column label="姓名" prop="name" width="120" />
+          <el-table-column label="姓名" width="120">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openStudentDetail(row.id)">
+                {{ row.name }}
+              </el-button>
+            </template>
+          </el-table-column>
           <el-table-column label="年级" prop="grade" width="100" />
           <el-table-column label="所属班级" prop="className" min-width="180" />
           <el-table-column label="家长" prop="parentName" width="120" />
@@ -97,6 +110,11 @@ onMounted(() => {
               <el-tag :type="row.status === '在读' ? 'success' : 'warning'">
                 {{ row.status }}
               </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openStudentDetail(row.id)">进入详情</el-button>
             </template>
           </el-table-column>
         </el-table>

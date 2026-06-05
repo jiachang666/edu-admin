@@ -41,17 +41,17 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) detail(c *gin.Context) {
-	student, found, studentErr := h.service.Student(c.Param("id"))
+	studentDetail, found, studentErr := h.service.StudentDetail(c.Param("id"))
 	if studentErr != nil {
 		response.InternalServerError(c)
 		return
 	}
 	if !found {
-		response.Success(c, gin.H{"id": c.Param("id")})
+		response.Failed(c, 404, "student not found")
 		return
 	}
 
-	response.Success(c, student)
+	response.Success(c, studentDetail)
 }
 
 func (h *Handler) update(c *gin.Context) {

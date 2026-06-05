@@ -876,6 +876,61 @@ a {
   gap: 22px;
 }
 
+.student-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.detail-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.detail-info-card {
+  padding: 18px;
+  border: 1px solid rgba(23, 38, 29, 0.08);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 251, 244, 0.82), rgba(248, 241, 231, 0.92));
+}
+
+.detail-info-card span {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.detail-info-card strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 1.05rem;
+  line-height: 1.4;
+}
+
+.detail-note,
+.detail-callout {
+  margin-top: 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.detail-note strong,
+.detail-callout strong {
+  display: block;
+  font-size: 13px;
+}
+
+.detail-note p,
+.detail-callout p {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.75;
+}
+
 .stats-grid--compact {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-bottom: 18px;
@@ -1340,6 +1395,7 @@ a {
   .homework-editor-grid,
   .dialog-grid,
   .class-detail-grid,
+  .student-detail-grid,
   .quick-actions-grid {
     grid-template-columns: 1fr;
   }
@@ -1404,6 +1460,7 @@ a {
   .topbar-cards,
   .stats-grid,
   .form-grid,
+  .detail-info-grid,
   .stats-grid--compact {
     grid-template-columns: 1fr;
   }
