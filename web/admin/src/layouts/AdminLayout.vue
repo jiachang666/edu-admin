@@ -2,6 +2,7 @@
 import {
   Bell,
   Calendar,
+  Checked,
   CollectionTag,
   House,
   Notebook,
@@ -52,6 +53,12 @@ const menus = [
     label: "排课",
     hint: "每天的上课节奏",
     icon: Calendar,
+  },
+  {
+    path: "/attendance",
+    label: "签到",
+    hint: "点名与历史回看",
+    icon: Checked,
   },
   {
     path: "/notices",

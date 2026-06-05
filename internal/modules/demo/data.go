@@ -2,6 +2,7 @@ package demo
 
 import (
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -95,10 +96,19 @@ type NoticeTarget struct {
 }
 
 type AttendanceItem struct {
-	StudentName string `json:"studentName"`
-	Status      string `json:"status"`
-	Remark      string `json:"remark"`
+	StudentID    int    `json:"studentId"`
+	StudentName  string `json:"studentName"`
+	Grade        string `json:"grade"`
+	ParentMobile string `json:"parentMobile"`
+	Status       string `json:"status"`
+	Remark       string `json:"remark"`
 }
+
+var (
+	attendanceStoreMu           sync.RWMutex
+	attendanceOverrideStore     = map[int][]AttendanceItem{}
+	scheduleStatusOverrideStore = map[int]string{}
+)
 
 func Teachers() []Teacher {
 	return []Teacher{
@@ -138,11 +148,22 @@ func Schedules() []Schedule {
 	today := now.Format(dateLayout)
 	tomorrow := now.AddDate(0, 0, 1).Format(dateLayout)
 
-	return []Schedule{
+	schedules := []Schedule{
 		{ID: 1, ClassID: 1, ClassName: "周末奥数提高班", CourseName: "数学思维", TeacherName: "周老师", Campus: "明发校区", Classroom: "A201", LessonDate: today, LessonTime: "09:00-10:30", AttendanceStatus: "待签到"},
 		{ID: 2, ClassID: 2, ClassName: "英语阅读进阶班", CourseName: "英语阅读", TeacherName: "林老师", Campus: "百汇校区", Classroom: "B103", LessonDate: today, LessonTime: "14:00-15:30", AttendanceStatus: "已完成"},
 		{ID: 3, ClassID: 3, ClassName: "少儿创意美术班", CourseName: "创意美术", TeacherName: "陈老师", Campus: "明发校区", Classroom: "Art-2", LessonDate: tomorrow, LessonTime: "10:00-11:30", AttendanceStatus: "待上课"},
 	}
+
+	attendanceStoreMu.RLock()
+	defer attendanceStoreMu.RUnlock()
+
+	for index := range schedules {
+		if status, found := scheduleStatusOverrideStore[schedules[index].ID]; found {
+			schedules[index].AttendanceStatus = status
+		}
+	}
+
+	return schedules
 }
 
 func Notices() []Notice {
@@ -296,25 +317,47 @@ func Attendance(rawScheduleID string) []AttendanceItem {
 		return []AttendanceItem{}
 	}
 
+	scheduleID, parseErr := strconv.Atoi(rawScheduleID)
+	if parseErr == nil {
+		attendanceStoreMu.RLock()
+		overrideItems, hasOverride := attendanceOverrideStore[scheduleID]
+		attendanceStoreMu.RUnlock()
+		if hasOverride {
+			return cloneAttendanceItems(overrideItems)
+		}
+	}
+
 	students := ClassStudents(strconv.Itoa(schedule.ClassID))
 	items := make([]AttendanceItem, 0, len(students))
 
 	for index, student := range students {
-		status := "已到"
+		status := "待确认"
 		remark := ""
 
-		if schedule.AttendanceStatus == "待签到" && index == 0 {
-			status = "待确认"
+		if schedule.ID == 1 && index > 0 {
+			status = "已到"
 		}
 
-		if schedule.AttendanceStatus == "已完成" && index == len(students)-1 {
+		if schedule.ID == 2 {
+			status = "请假"
+			remark = "家长上午已请假"
+		}
+
+		if schedule.AttendanceStatus == "已完成" && schedule.ID != 2 {
+			status = "已到"
+		}
+
+		if schedule.AttendanceStatus == "已完成" && schedule.ID != 2 && index == len(students)-1 {
 			remark = "课堂表现积极"
 		}
 
 		items = append(items, AttendanceItem{
-			StudentName: student.Name,
-			Status:      status,
-			Remark:      remark,
+			StudentID:    student.ID,
+			StudentName:  student.Name,
+			Grade:        student.Grade,
+			ParentMobile: student.ParentMobile,
+			Status:       status,
+			Remark:       remark,
 		})
 	}
 
@@ -330,7 +373,7 @@ func Overview() map[string]any {
 
 	todayCourses := 0
 	todayPendingCheck := 0
-	todayLeaveCount := 1
+	todayLeaveCount := 0
 	todayAbsentCount := 0
 	pendingActionCount := 0
 
@@ -340,6 +383,15 @@ func Overview() map[string]any {
 		}
 		if schedule.AttendanceStatus == "待签到" {
 			todayPendingCheck++
+		}
+
+		for _, item := range Attendance(strconv.Itoa(schedule.ID)) {
+			switch item.Status {
+			case "请假":
+				todayLeaveCount++
+			case "缺席":
+				todayAbsentCount++
+			}
 		}
 	}
 
@@ -364,4 +416,37 @@ func Overview() map[string]any {
 
 func matchID(id int, rawID string) bool {
 	return strconv.Itoa(id) == rawID
+}
+
+func SaveAttendance(rawScheduleID string, items []AttendanceItem) bool {
+	scheduleID, parseErr := strconv.Atoi(rawScheduleID)
+	if parseErr != nil {
+		return false
+	}
+
+	attendanceStoreMu.Lock()
+	defer attendanceStoreMu.Unlock()
+
+	attendanceOverrideStore[scheduleID] = cloneAttendanceItems(items)
+	scheduleStatusOverrideStore[scheduleID] = deriveAttendanceSessionStatus(items)
+
+	return true
+}
+
+func cloneAttendanceItems(source []AttendanceItem) []AttendanceItem {
+	items := make([]AttendanceItem, 0, len(source))
+	for _, item := range source {
+		items = append(items, item)
+	}
+	return items
+}
+
+func deriveAttendanceSessionStatus(items []AttendanceItem) string {
+	for _, item := range items {
+		if item.Status == "待确认" {
+			return "待签到"
+		}
+	}
+
+	return "已完成"
 }

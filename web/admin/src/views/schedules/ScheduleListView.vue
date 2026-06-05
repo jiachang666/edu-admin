@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { fetchScheduleList, type Schedule } from "../../api/education";
 
 const loading = ref(false);
 const schedules = ref<Schedule[]>([]);
+const router = useRouter();
 
 const doneCount = computed(() => {
   return schedules.value.filter((item) => item.attendanceStatus === "已完成").length;
@@ -30,6 +32,13 @@ async function loadSchedules() {
   } finally {
     loading.value = false;
   }
+}
+
+async function openAttendance(scheduleId: number) {
+  await router.push({
+    path: "/attendance",
+    query: { scheduleId: String(scheduleId) },
+  });
 }
 
 onMounted(() => {
@@ -97,6 +106,13 @@ onMounted(() => {
               >
                 {{ row.attendanceStatus }}
               </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openAttendance(row.id)">
+                {{ row.attendanceStatus === "待签到" ? "去签到" : "看记录" }}
+              </el-button>
             </template>
           </el-table-column>
         </el-table>

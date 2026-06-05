@@ -8,6 +8,7 @@ import StudentListView from "../views/students/StudentListView.vue";
 import CourseListView from "../views/courses/CourseListView.vue";
 import ClassListView from "../views/classes/ClassListView.vue";
 import ScheduleListView from "../views/schedules/ScheduleListView.vue";
+import AttendanceView from "../views/attendance/AttendanceView.vue";
 import NoticeListView from "../views/notices/NoticeListView.vue";
 
 const router = createRouter({
@@ -86,6 +87,16 @@ const router = createRouter({
             title: "排课管理",
             eyebrow: "Schedule Rail",
             description: "看清楚每天谁来上课、什么时候上、在哪里上。",
+          },
+        },
+        {
+          path: "attendance",
+          name: "attendance",
+          component: AttendanceView,
+          meta: {
+            title: "签到管理",
+            eyebrow: "Attendance Desk",
+            description: "把待签到班级、点名结果和历史记录收进一个顺手的签到工作台。",
           },
         },
         {

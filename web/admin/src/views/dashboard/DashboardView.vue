@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import { fetchDashboardOverview, type DashboardOverview } from "../../api/education";
 
 const loading = ref(false);
+const router = useRouter();
 const overview = reactive<DashboardOverview>({
   todayCourses: 0,
   todayPendingCheck: 0,
@@ -42,6 +44,13 @@ const signalCards = computed(() => [
     description: "当前总览更适合负责人和教务快速盘点全局。",
   },
 ]);
+
+async function openAttendance(scheduleId: number) {
+  await router.push({
+    path: "/attendance",
+    query: { scheduleId: String(scheduleId) },
+  });
+}
 
 async function loadOverview() {
   loading.value = true;
@@ -132,6 +141,13 @@ onMounted(() => {
             <el-table-column label="状态" width="120">
               <template #default="{ row }">
                 <el-tag>{{ row.attendanceStatus }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="处理" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openAttendance(row.id)">
+                  {{ row.attendanceStatus === "待签到" ? "去签到" : "看记录" }}
+                </el-button>
               </template>
             </el-table-column>
           </el-table>

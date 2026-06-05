@@ -98,6 +98,38 @@ export type Notice = {
   author: string;
 };
 
+export type AttendanceEntry = {
+  studentId: number;
+  studentName: string;
+  grade: string;
+  parentMobile: string;
+  status: string;
+  remark: string;
+};
+
+export type AttendanceSession = {
+  id: number;
+  classId: number;
+  className: string;
+  courseName: string;
+  teacherName: string;
+  campus: string;
+  classroom: string;
+  lessonDate: string;
+  lessonTime: string;
+  attendanceStatus: string;
+  studentCount: number;
+  presentCount: number;
+  leaveCount: number;
+  absentCount: number;
+  pendingCount: number;
+};
+
+export type AttendanceDetail = {
+  schedule: Schedule;
+  items: AttendanceEntry[];
+};
+
 export type DashboardOverview = {
   todayCourses: number;
   todayPendingCheck: number;
@@ -153,4 +185,19 @@ export function fetchScheduleList() {
 
 export function fetchNoticeList() {
   return unwrap<PagedResult<Notice>>(http.get("/notices"));
+}
+
+export function fetchAttendanceSessionList() {
+  return unwrap<PagedResult<AttendanceSession>>(http.get("/attendance"));
+}
+
+export function fetchScheduleAttendance(scheduleId: number) {
+  return unwrap<AttendanceDetail>(http.get(`/schedules/${scheduleId}/attendance`));
+}
+
+export function saveScheduleAttendance(
+  scheduleId: number,
+  payload: { items: Array<{ studentId: number; status: string; remark: string }> },
+) {
+  return unwrap<{ saved: boolean }>(http.put(`/schedules/${scheduleId}/attendance`, payload));
 }
