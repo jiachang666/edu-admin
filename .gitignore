@@ -1,0 +1,17 @@
+.DS_Store
+.idea/
+.vscode/
+
+.env
+.env.local
+
+docs/
+
+bin/
+tmp/
+logs/
+*.log
+coverage.out
+
+web/admin/node_modules/
+web/admin/dist/
