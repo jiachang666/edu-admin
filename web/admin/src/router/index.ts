@@ -5,6 +5,7 @@ import LoginView from "../views/auth/LoginView.vue";
 import DashboardView from "../views/dashboard/DashboardView.vue";
 import TeacherListView from "../views/teachers/TeacherListView.vue";
 import StudentListView from "../views/students/StudentListView.vue";
+import CourseListView from "../views/courses/CourseListView.vue";
 import ClassListView from "../views/classes/ClassListView.vue";
 import ScheduleListView from "../views/schedules/ScheduleListView.vue";
 import NoticeListView from "../views/notices/NoticeListView.vue";
@@ -25,6 +26,7 @@ const router = createRouter({
         { path: "dashboard", name: "dashboard", component: DashboardView },
         { path: "teachers", name: "teachers", component: TeacherListView },
         { path: "students", name: "students", component: StudentListView },
+        { path: "courses", name: "courses", component: CourseListView },
         { path: "classes", name: "classes", component: ClassListView },
         { path: "schedules", name: "schedules", component: ScheduleListView },
         { path: "notices", name: "notices", component: NoticeListView },

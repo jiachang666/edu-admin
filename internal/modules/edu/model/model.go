@@ -46,6 +46,7 @@ type Course struct {
 	ID                    uint64    `gorm:"primaryKey"`
 	Name                  string    `gorm:"size:128;not null"`
 	Category              string    `gorm:"size:64"`
+	Description           string    `gorm:"type:text"`
 	AgeRange              string    `gorm:"column:age_range;size:64"`
 	LessonDurationMinutes int       `gorm:"column:lesson_duration_minutes;not null;default:0"`
 	TotalLessons          int       `gorm:"column:total_lessons;not null;default:0"`

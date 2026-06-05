@@ -8,6 +8,7 @@ const menus = [
   { path: "/dashboard", label: "首页" },
   { path: "/teachers", label: "老师" },
   { path: "/students", label: "学员" },
+  { path: "/courses", label: "课程" },
   { path: "/classes", label: "班级" },
   { path: "/schedules", label: "排课" },
   { path: "/notices", label: "通知" },
