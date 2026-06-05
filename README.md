@@ -123,6 +123,11 @@ make tidy
 make web-dev
 ```
 
+## 协作开发
+
+- 分支、提交和合并的约定见 [CONTRIBUTING.md](CONTRIBUTING.md)
+- 本地规划类文档继续放在 `docs/`，对外协作文档放仓库根目录
+
 ## 目录结构
 
 ```text
