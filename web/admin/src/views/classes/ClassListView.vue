@@ -1,10 +1,36 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import { fetchClassList, type SchoolClass } from "../../api/education";
+
+const router = useRouter();
 
 const loading = ref(false);
 const classes = ref<SchoolClass[]>([]);
+
+const filters = reactive({
+  keyword: "",
+  status: "",
+  teacher: "",
+});
+
+const filteredClasses = computed(() => {
+  const keyword = filters.keyword.trim().toLowerCase();
+
+  return classes.value.filter((item) => {
+    const matchesKeyword =
+      keyword.length === 0 ||
+      [item.name, item.courseName, item.teacherName, item.campus]
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword);
+    const matchesStatus = filters.status.length === 0 || item.status === filters.status;
+    const matchesTeacher = filters.teacher.length === 0 || item.teacherName === filters.teacher;
+
+    return matchesKeyword && matchesStatus && matchesTeacher;
+  });
+});
 
 const runningCount = computed(() => {
   return classes.value.filter((item) => item.status === "开班中").length;
@@ -16,6 +42,10 @@ const remainingSeats = computed(() => {
 
 const campusCount = computed(() => {
   return new Set(classes.value.map((item) => item.campus)).size;
+});
+
+const teacherOptions = computed(() => {
+  return Array.from(new Set(classes.value.map((item) => item.teacherName).filter(Boolean)));
 });
 
 async function loadClasses() {
@@ -32,6 +62,16 @@ async function loadClasses() {
   }
 }
 
+function handleResetFilters() {
+  filters.keyword = "";
+  filters.status = "";
+  filters.teacher = "";
+}
+
+function openDetail(classId: number) {
+  void router.push(`/classes/${classId}`);
+}
+
 onMounted(() => {
   void loadClasses();
 });
@@ -42,9 +82,9 @@ onMounted(() => {
     <section class="page-hero">
       <div class="page-hero__copy">
         <span class="section-kicker">Classroom Matrix</span>
-        <h2>把班级、课程、老师和容量安排放进同一个稳定的班级矩阵里。</h2>
+        <h2>先从班级列表看整体，再进入某一个班，把学员、排课和课后动作连到一起。</h2>
         <p>
-          这页更适合教务看整体开班情况：哪些班已开、还有多少余量、目前覆盖了几个校区，后面再接新增和编辑流程会更顺。
+          这页现在不仅能看班级矩阵，也能直接进入班级详情中心页。后面老师和教务的大多数动作，都可以从那个入口继续往下走。
         </p>
       </div>
 
@@ -76,14 +116,52 @@ onMounted(() => {
       <div class="page-header">
         <div>
           <h2>班级列表</h2>
-          <p class="soft-text">先把班级、课程、老师和容量关系串起来。</p>
+          <p class="soft-text">先找到目标班级，再进入详情页处理学员、排课、签到和通知。</p>
         </div>
         <div class="section-note">班级视图</div>
       </div>
 
+      <div class="page-toolbar">
+        <div class="toolbar-filters">
+          <el-input
+            v-model="filters.keyword"
+            class="toolbar-field"
+            clearable
+            placeholder="搜索班级、课程、老师或校区"
+          />
+          <el-select
+            v-model="filters.teacher"
+            class="toolbar-field"
+            clearable
+            placeholder="主讲老师"
+          >
+            <el-option
+              v-for="teacher in teacherOptions"
+              :key="teacher"
+              :label="teacher"
+              :value="teacher"
+            />
+          </el-select>
+          <el-select
+            v-model="filters.status"
+            class="toolbar-field"
+            clearable
+            placeholder="班级状态"
+          >
+            <el-option label="开班中" value="开班中" />
+            <el-option label="待满班" value="待满班" />
+          </el-select>
+        </div>
+        <el-button @click="handleResetFilters">重置筛选</el-button>
+      </div>
+
       <div class="data-table-shell">
-        <el-table v-loading="loading" :data="classes" stripe>
-          <el-table-column label="班级名称" prop="name" min-width="180" />
+        <el-table v-loading="loading" :data="filteredClasses" stripe>
+          <el-table-column label="班级名称" min-width="200">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openDetail(row.id)">{{ row.name }}</el-button>
+            </template>
+          </el-table-column>
           <el-table-column label="课程" prop="courseName" width="140" />
           <el-table-column label="老师" prop="teacherName" width="120" />
           <el-table-column label="校区" prop="campus" width="120" />
@@ -98,6 +176,11 @@ onMounted(() => {
               <el-tag :type="row.status === '开班中' ? 'success' : 'warning'">
                 {{ row.status }}
               </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openDetail(row.id)">进入详情</el-button>
             </template>
           </el-table-column>
         </el-table>

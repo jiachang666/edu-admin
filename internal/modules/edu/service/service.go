@@ -95,6 +95,19 @@ type ClassItem struct {
 	Status         string `json:"status"`
 }
 
+type ClassDetail struct {
+	Class             ClassItem               `json:"class"`
+	Students          []StudentItem           `json:"students"`
+	UpcomingSchedules []ScheduleItem          `json:"upcomingSchedules"`
+	RecentAttendance  []AttendanceSessionItem `json:"recentAttendance"`
+	RecentHomeworks   []HomeworkItem          `json:"recentHomeworks"`
+	RecentNotices     []NoticeItem            `json:"recentNotices"`
+}
+
+type ClassStudentPayload struct {
+	StudentIDs []uint64 `json:"studentIds"`
+}
+
 type ScheduleItem struct {
 	ID               uint64 `json:"id"`
 	ClassID          uint64 `json:"classId" gorm:"column:class_id"`
@@ -793,6 +806,157 @@ ORDER BY s.id ASC
 	}
 
 	return items, nil
+}
+
+func (s *Service) ClassDetail(rawClassID string) (ClassDetail, bool, error) {
+	classItem, found, classErr := s.Class(rawClassID)
+	if classErr != nil {
+		return ClassDetail{}, false, classErr
+	}
+	if !found {
+		return ClassDetail{}, false, nil
+	}
+
+	students, studentErr := s.ClassStudents(rawClassID)
+	if studentErr != nil {
+		return ClassDetail{}, false, studentErr
+	}
+
+	upcomingSchedules, scheduleErr := s.UpcomingSchedules(rawClassID)
+	if scheduleErr != nil {
+		return ClassDetail{}, false, scheduleErr
+	}
+
+	recentAttendance := make([]AttendanceSessionItem, 0, len(upcomingSchedules))
+	for _, scheduleItem := range upcomingSchedules {
+		attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+		if attendanceErr != nil {
+			return ClassDetail{}, false, attendanceErr
+		}
+
+		presentCount, leaveCount, absentCount, pendingCount := summarizeAttendanceItems(attendanceItems)
+		recentAttendance = append(recentAttendance, AttendanceSessionItem{
+			ID:               scheduleItem.ID,
+			ClassID:          scheduleItem.ClassID,
+			ClassName:        scheduleItem.ClassName,
+			CourseName:       scheduleItem.CourseName,
+			TeacherName:      scheduleItem.TeacherName,
+			Campus:           scheduleItem.Campus,
+			Classroom:        scheduleItem.Classroom,
+			LessonDate:       scheduleItem.LessonDate,
+			LessonTime:       scheduleItem.LessonTime,
+			AttendanceStatus: sessionAttendanceStatus(scheduleItem.AttendanceStatus, pendingCount),
+			StudentCount:     len(attendanceItems),
+			PresentCount:     presentCount,
+			LeaveCount:       leaveCount,
+			AbsentCount:      absentCount,
+			PendingCount:     pendingCount,
+		})
+	}
+
+	homeworks, homeworkErr := s.Homeworks()
+	if homeworkErr != nil {
+		return ClassDetail{}, false, homeworkErr
+	}
+
+	recentHomeworks := make([]HomeworkItem, 0, len(homeworks))
+	for _, item := range homeworks {
+		if item.ClassID == classItem.ID {
+			recentHomeworks = append(recentHomeworks, item)
+		}
+	}
+
+	notices, noticeErr := s.Notices()
+	if noticeErr != nil {
+		return ClassDetail{}, false, noticeErr
+	}
+
+	recentNotices := make([]NoticeItem, 0, len(notices))
+	for _, item := range notices {
+		if item.RelatedClassID == classItem.ID {
+			recentNotices = append(recentNotices, item)
+		}
+	}
+
+	return ClassDetail{
+		Class:             classItem,
+		Students:          students,
+		UpcomingSchedules: upcomingSchedules,
+		RecentAttendance:  recentAttendance,
+		RecentHomeworks:   recentHomeworks,
+		RecentNotices:     recentNotices,
+	}, true, nil
+}
+
+func (s *Service) AddStudentsToClass(rawClassID string, studentIDs []uint64) (bool, error) {
+	classItem, found, classErr := s.Class(rawClassID)
+	if classErr != nil {
+		return false, classErr
+	}
+	if !found {
+		return false, nil
+	}
+
+	if len(studentIDs) == 0 {
+		return true, nil
+	}
+
+	if s.db == nil {
+		return true, nil
+	}
+
+	now := time.Now()
+	records := make([]edumodel.ClassStudent, 0, len(studentIDs))
+	for _, studentID := range studentIDs {
+		records = append(records, edumodel.ClassStudent{
+			ClassID:   classItem.ID,
+			StudentID: studentID,
+			JoinDate:  datePointer(startOfDay(now)),
+			Status:    activeClassStudentStatus,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+	}
+
+	saveErr := s.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "class_id"},
+			{Name: "student_id"},
+		},
+		DoUpdates: clause.Assignments(map[string]any{
+			"status":     activeClassStudentStatus,
+			"leave_date": nil,
+			"updated_at": now,
+		}),
+	}).Create(&records).Error
+	if saveErr != nil {
+		return false, saveErr
+	}
+
+	return true, nil
+}
+
+func (s *Service) RemoveStudentFromClass(rawClassID string, rawStudentID string) (bool, error) {
+	if s.db == nil {
+		return true, nil
+	}
+
+	now := time.Now()
+	updateResult := s.db.Model(&edumodel.ClassStudent{}).
+		Where("class_id = ? AND student_id = ?", rawClassID, rawStudentID).
+		Updates(map[string]any{
+			"status":     "已移出",
+			"leave_date": datePointer(startOfDay(now)),
+			"updated_at": now,
+		})
+	if updateResult.Error != nil {
+		return false, updateResult.Error
+	}
+	if updateResult.RowsAffected == 0 {
+		return false, nil
+	}
+
+	return true, nil
 }
 
 func (s *Service) Schedules() ([]ScheduleItem, error) {
