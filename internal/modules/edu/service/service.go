@@ -160,11 +160,42 @@ type ScheduleItem struct {
 	ClassName        string `json:"className" gorm:"column:class_name"`
 	CourseName       string `json:"courseName" gorm:"column:course_name"`
 	TeacherName      string `json:"teacherName" gorm:"column:teacher_name"`
+	TeacherID        uint64 `json:"teacherId"`
 	Campus           string `json:"campus"`
 	Classroom        string `json:"classroom"`
+	ScheduleType     string `json:"scheduleType"`
 	LessonDate       string `json:"lessonDate"`
 	LessonTime       string `json:"lessonTime"`
 	AttendanceStatus string `json:"attendanceStatus"`
+	Remark           string `json:"remark"`
+}
+
+type SchedulePayload struct {
+	ClassID      uint64 `json:"classId"`
+	ScheduleType string `json:"scheduleType"`
+	LessonDate   string `json:"lessonDate"`
+	StartTime    string `json:"startTime"`
+	EndTime      string `json:"endTime"`
+	Classroom    string `json:"classroom"`
+	Remark       string `json:"remark"`
+}
+
+type ScheduleActionPayload struct {
+	LessonDate string `json:"lessonDate"`
+	StartTime  string `json:"startTime"`
+	EndTime    string `json:"endTime"`
+	Classroom  string `json:"classroom"`
+	Remark     string `json:"remark"`
+}
+
+type ScheduleDetail struct {
+	Schedule       ScheduleItem          `json:"schedule"`
+	Class          ClassItem             `json:"class"`
+	Students       []StudentItem         `json:"students"`
+	Attendance     AttendanceSessionItem `json:"attendance"`
+	Homework       *HomeworkItem         `json:"homework"`
+	Feedback       *FeedbackItem         `json:"feedback"`
+	RelatedNotices []NoticeItem          `json:"relatedNotices"`
 }
 
 type NoticeItem struct {
@@ -1214,6 +1245,93 @@ func (s *Service) RemoveStudentFromClass(rawClassID string, rawStudentID string)
 	return true, nil
 }
 
+func (s *Service) ScheduleDetail(rawID string) (ScheduleDetail, bool, error) {
+	scheduleItem, found, scheduleErr := s.Schedule(rawID)
+	if scheduleErr != nil {
+		return ScheduleDetail{}, false, scheduleErr
+	}
+	if !found {
+		return ScheduleDetail{}, false, nil
+	}
+
+	classItem, classFound, classErr := s.Class(fmt.Sprintf("%d", scheduleItem.ClassID))
+	if classErr != nil {
+		return ScheduleDetail{}, false, classErr
+	}
+	if !classFound {
+		return ScheduleDetail{}, false, nil
+	}
+
+	students, studentErr := s.ClassStudents(fmt.Sprintf("%d", scheduleItem.ClassID))
+	if studentErr != nil {
+		return ScheduleDetail{}, false, studentErr
+	}
+
+	attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+	if attendanceErr != nil {
+		return ScheduleDetail{}, false, attendanceErr
+	}
+
+	presentCount, leaveCount, absentCount, pendingCount := summarizeAttendanceItems(attendanceItems)
+	attendanceSummary := AttendanceSessionItem{
+		ID:               scheduleItem.ID,
+		ClassID:          scheduleItem.ClassID,
+		ClassName:        scheduleItem.ClassName,
+		CourseName:       scheduleItem.CourseName,
+		TeacherName:      scheduleItem.TeacherName,
+		Campus:           scheduleItem.Campus,
+		Classroom:        scheduleItem.Classroom,
+		LessonDate:       scheduleItem.LessonDate,
+		LessonTime:       scheduleItem.LessonTime,
+		AttendanceStatus: sessionAttendanceStatus(scheduleItem.AttendanceStatus, pendingCount),
+		StudentCount:     len(attendanceItems),
+		PresentCount:     presentCount,
+		LeaveCount:       leaveCount,
+		AbsentCount:      absentCount,
+		PendingCount:     pendingCount,
+	}
+
+	var homeworkItem *HomeworkItem
+	loadedHomework, homeworkFound, homeworkErr := s.Homework(rawID)
+	if homeworkErr != nil {
+		return ScheduleDetail{}, false, homeworkErr
+	}
+	if homeworkFound {
+		homeworkItem = &loadedHomework
+	}
+
+	var feedbackItem *FeedbackItem
+	loadedFeedback, feedbackFound, feedbackErr := s.Feedback(rawID)
+	if feedbackErr != nil {
+		return ScheduleDetail{}, false, feedbackErr
+	}
+	if feedbackFound {
+		feedbackItem = &loadedFeedback
+	}
+
+	notices, noticeErr := s.Notices()
+	if noticeErr != nil {
+		return ScheduleDetail{}, false, noticeErr
+	}
+
+	relatedNotices := make([]NoticeItem, 0, len(notices))
+	for _, item := range notices {
+		if item.RelatedClassID == scheduleItem.ClassID {
+			relatedNotices = append(relatedNotices, item)
+		}
+	}
+
+	return ScheduleDetail{
+		Schedule:       scheduleItem,
+		Class:          classItem,
+		Students:       students,
+		Attendance:     attendanceSummary,
+		Homework:       homeworkItem,
+		Feedback:       feedbackItem,
+		RelatedNotices: relatedNotices,
+	}, true, nil
+}
+
 func (s *Service) Schedules() ([]ScheduleItem, error) {
 	if s.db == nil {
 		return scheduleItemsFromDemo(demo.Schedules()), nil
@@ -1225,13 +1343,16 @@ SELECT
   s.class_id,
   COALESCE(c.name, '') AS class_name,
   COALESCE(co.name, '') AS course_name,
+  COALESCE(s.teacher_id, 0) AS teacher_id,
   COALESCE(t.name, '') AS teacher_name,
   c.campus,
   COALESCE(s.location, '') AS classroom,
+  COALESCE(s.schedule_type, '') AS schedule_type,
   s.schedule_date,
   s.start_time,
   s.end_time,
-  s.status AS attendance_status
+  s.status AS attendance_status,
+  COALESCE(s.remark, '') AS remark
 FROM class_schedules AS s
 LEFT JOIN classes AS c
   ON c.id = s.class_id
@@ -1247,13 +1368,16 @@ ORDER BY s.schedule_date ASC, s.start_time ASC, s.id ASC
 		ClassID          uint64    `gorm:"column:class_id"`
 		ClassName        string    `gorm:"column:class_name"`
 		CourseName       string    `gorm:"column:course_name"`
+		TeacherID        uint64    `gorm:"column:teacher_id"`
 		TeacherName      string    `gorm:"column:teacher_name"`
 		Campus           string    `gorm:"column:campus"`
 		Classroom        string    `gorm:"column:classroom"`
+		ScheduleType     string    `gorm:"column:schedule_type"`
 		ScheduleDate     time.Time `gorm:"column:schedule_date"`
 		StartTime        string    `gorm:"column:start_time"`
 		EndTime          string    `gorm:"column:end_time"`
 		AttendanceStatus string    `gorm:"column:attendance_status"`
+		Remark           string    `gorm:"column:remark"`
 	}
 
 	var rows []scheduleRow
@@ -1269,12 +1393,15 @@ ORDER BY s.schedule_date ASC, s.start_time ASC, s.id ASC
 			ClassID:          row.ClassID,
 			ClassName:        row.ClassName,
 			CourseName:       row.CourseName,
+			TeacherID:        row.TeacherID,
 			TeacherName:      row.TeacherName,
 			Campus:           row.Campus,
 			Classroom:        row.Classroom,
+			ScheduleType:     row.ScheduleType,
 			LessonDate:       row.ScheduleDate.Format(dateLayout),
 			LessonTime:       formatLessonTime(row.StartTime, row.EndTime),
 			AttendanceStatus: row.AttendanceStatus,
+			Remark:           row.Remark,
 		})
 	}
 
@@ -1294,6 +1421,312 @@ func (s *Service) Schedule(rawID string) (ScheduleItem, bool, error) {
 	}
 
 	return ScheduleItem{}, false, nil
+}
+
+func (s *Service) CreateSchedule(payload SchedulePayload) (ScheduleItem, error) {
+	classItem, found, classErr := s.Class(fmt.Sprintf("%d", payload.ClassID))
+	if classErr != nil {
+		return ScheduleItem{}, classErr
+	}
+	if !found {
+		return ScheduleItem{}, nil
+	}
+
+	lessonDate, parseErr := time.ParseInLocation(dateLayout, payload.LessonDate, time.Local)
+	if parseErr != nil {
+		return ScheduleItem{}, nil
+	}
+
+	scheduleType := strings.TrimSpace(payload.ScheduleType)
+	if scheduleType == "" {
+		scheduleType = "常规课"
+	}
+
+	if s.db == nil {
+		nextID := scheduleItemsFromDemo(demo.Schedules())
+		createdID := uint64(len(nextID) + 1)
+		return ScheduleItem{
+			ID:               createdID,
+			ClassID:          classItem.ID,
+			ClassName:        classItem.Name,
+			CourseName:       classItem.CourseName,
+			TeacherID:        classItem.TeacherID,
+			TeacherName:      classItem.TeacherName,
+			Campus:           classItem.Campus,
+			Classroom:        strings.TrimSpace(payload.Classroom),
+			ScheduleType:     scheduleType,
+			LessonDate:       lessonDate.Format(dateLayout),
+			LessonTime:       formatLessonTime(payload.StartTime, payload.EndTime),
+			AttendanceStatus: "待上课",
+			Remark:           strings.TrimSpace(payload.Remark),
+		}, nil
+	}
+
+	courseID, courseFound, courseErr := s.classCourseID(payload.ClassID)
+	if courseErr != nil {
+		return ScheduleItem{}, courseErr
+	}
+	if !courseFound {
+		return ScheduleItem{}, nil
+	}
+
+	now := time.Now()
+	record := edumodel.ClassSchedule{
+		ClassID:      classItem.ID,
+		CourseID:     courseID,
+		TeacherID:    classItem.TeacherID,
+		ScheduleType: scheduleType,
+		ScheduleDate: lessonDate,
+		StartTime:    strings.TrimSpace(payload.StartTime),
+		EndTime:      strings.TrimSpace(payload.EndTime),
+		Location:     strings.TrimSpace(payload.Classroom),
+		Status:       "待上课",
+		Remark:       strings.TrimSpace(payload.Remark),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	createErr := s.db.Create(&record).Error
+	if createErr != nil {
+		return ScheduleItem{}, createErr
+	}
+
+	createdItem, itemFound, detailErr := s.Schedule(fmt.Sprintf("%d", record.ID))
+	if detailErr != nil {
+		return ScheduleItem{}, detailErr
+	}
+	if !itemFound {
+		return ScheduleItem{}, nil
+	}
+
+	return createdItem, nil
+}
+
+func (s *Service) UpdateSchedule(rawID string, payload SchedulePayload) (ScheduleItem, bool, error) {
+	scheduleItem, found, scheduleErr := s.Schedule(rawID)
+	if scheduleErr != nil {
+		return ScheduleItem{}, false, scheduleErr
+	}
+	if !found {
+		return ScheduleItem{}, false, nil
+	}
+
+	classItem, classFound, classErr := s.Class(fmt.Sprintf("%d", payload.ClassID))
+	if classErr != nil {
+		return ScheduleItem{}, false, classErr
+	}
+	if !classFound {
+		return ScheduleItem{}, false, nil
+	}
+
+	lessonDate, parseErr := time.ParseInLocation(dateLayout, payload.LessonDate, time.Local)
+	if parseErr != nil {
+		return ScheduleItem{}, false, nil
+	}
+
+	scheduleType := strings.TrimSpace(payload.ScheduleType)
+	if scheduleType == "" {
+		scheduleType = scheduleItem.ScheduleType
+		if scheduleType == "" {
+			scheduleType = "常规课"
+		}
+	}
+
+	if s.db == nil {
+		return ScheduleItem{
+			ID:               scheduleItem.ID,
+			ClassID:          classItem.ID,
+			ClassName:        classItem.Name,
+			CourseName:       classItem.CourseName,
+			TeacherID:        classItem.TeacherID,
+			TeacherName:      classItem.TeacherName,
+			Campus:           classItem.Campus,
+			Classroom:        strings.TrimSpace(payload.Classroom),
+			ScheduleType:     scheduleType,
+			LessonDate:       lessonDate.Format(dateLayout),
+			LessonTime:       formatLessonTime(payload.StartTime, payload.EndTime),
+			AttendanceStatus: scheduleItem.AttendanceStatus,
+			Remark:           strings.TrimSpace(payload.Remark),
+		}, true, nil
+	}
+
+	courseID, courseFound, courseErr := s.classCourseID(payload.ClassID)
+	if courseErr != nil {
+		return ScheduleItem{}, false, courseErr
+	}
+	if !courseFound {
+		return ScheduleItem{}, false, nil
+	}
+
+	updateValues := map[string]any{
+		"class_id":      classItem.ID,
+		"course_id":     courseID,
+		"teacher_id":    classItem.TeacherID,
+		"schedule_type": scheduleType,
+		"schedule_date": lessonDate,
+		"start_time":    strings.TrimSpace(payload.StartTime),
+		"end_time":      strings.TrimSpace(payload.EndTime),
+		"location":      strings.TrimSpace(payload.Classroom),
+		"remark":        strings.TrimSpace(payload.Remark),
+		"updated_at":    time.Now(),
+	}
+
+	updateResult := s.db.Model(&edumodel.ClassSchedule{}).
+		Where("id = ?", rawID).
+		Updates(updateValues)
+	if updateResult.Error != nil {
+		return ScheduleItem{}, false, updateResult.Error
+	}
+	if updateResult.RowsAffected == 0 {
+		return ScheduleItem{}, false, nil
+	}
+
+	updatedItem, itemFound, detailErr := s.Schedule(rawID)
+	if detailErr != nil {
+		return ScheduleItem{}, false, detailErr
+	}
+
+	return updatedItem, itemFound, nil
+}
+
+func (s *Service) Reschedule(rawID string, payload ScheduleActionPayload) (ScheduleItem, bool, error) {
+	scheduleItem, found, scheduleErr := s.Schedule(rawID)
+	if scheduleErr != nil {
+		return ScheduleItem{}, false, scheduleErr
+	}
+	if !found {
+		return ScheduleItem{}, false, nil
+	}
+
+	updatePayload := SchedulePayload{
+		ClassID:      scheduleItem.ClassID,
+		ScheduleType: "调课",
+		LessonDate:   payload.LessonDate,
+		StartTime:    payload.StartTime,
+		EndTime:      payload.EndTime,
+		Classroom:    payload.Classroom,
+		Remark:       payload.Remark,
+	}
+
+	updatedItem, itemFound, updateErr := s.UpdateSchedule(rawID, updatePayload)
+	if updateErr != nil || !itemFound {
+		return updatedItem, itemFound, updateErr
+	}
+
+	if s.db == nil {
+		updatedItem.AttendanceStatus = "已调课"
+		return updatedItem, true, nil
+	}
+
+	statusErr := s.db.Model(&edumodel.ClassSchedule{}).
+		Where("id = ?", rawID).
+		Updates(map[string]any{
+			"status":     "已调课",
+			"updated_at": time.Now(),
+		}).Error
+	if statusErr != nil {
+		return ScheduleItem{}, false, statusErr
+	}
+
+	return s.Schedule(rawID)
+}
+
+func (s *Service) CancelSchedule(rawID string, payload ScheduleActionPayload) (ScheduleItem, bool, error) {
+	if s.db == nil {
+		scheduleItem, found, scheduleErr := s.Schedule(rawID)
+		if scheduleErr != nil || !found {
+			return scheduleItem, found, scheduleErr
+		}
+
+		scheduleItem.AttendanceStatus = "已停课"
+		scheduleItem.Remark = strings.TrimSpace(payload.Remark)
+		return scheduleItem, true, nil
+	}
+
+	updateResult := s.db.Model(&edumodel.ClassSchedule{}).
+		Where("id = ?", rawID).
+		Updates(map[string]any{
+			"status":     "已停课",
+			"remark":     strings.TrimSpace(payload.Remark),
+			"updated_at": time.Now(),
+		})
+	if updateResult.Error != nil {
+		return ScheduleItem{}, false, updateResult.Error
+	}
+	if updateResult.RowsAffected == 0 {
+		return ScheduleItem{}, false, nil
+	}
+
+	return s.Schedule(rawID)
+}
+
+func (s *Service) CreateMakeupSchedule(rawID string, payload ScheduleActionPayload) (ScheduleItem, bool, error) {
+	originalItem, found, originalErr := s.Schedule(rawID)
+	if originalErr != nil {
+		return ScheduleItem{}, false, originalErr
+	}
+	if !found {
+		return ScheduleItem{}, false, nil
+	}
+
+	makeupPayload := SchedulePayload{
+		ClassID:      originalItem.ClassID,
+		ScheduleType: "补课",
+		LessonDate:   payload.LessonDate,
+		StartTime:    payload.StartTime,
+		EndTime:      payload.EndTime,
+		Classroom:    payload.Classroom,
+		Remark:       payload.Remark,
+	}
+
+	createdItem, createErr := s.CreateSchedule(makeupPayload)
+	if createErr != nil {
+		return ScheduleItem{}, false, createErr
+	}
+	if createdItem.ID == 0 {
+		return ScheduleItem{}, false, nil
+	}
+
+	if s.db == nil {
+		createdItem.AttendanceStatus = "待上课"
+		return createdItem, true, nil
+	}
+
+	statusErr := s.db.Model(&edumodel.ClassSchedule{}).
+		Where("id = ?", createdItem.ID).
+		Updates(map[string]any{
+			"status":     "待上课",
+			"updated_at": time.Now(),
+		}).Error
+	if statusErr != nil {
+		return ScheduleItem{}, false, statusErr
+	}
+
+	return s.Schedule(fmt.Sprintf("%d", createdItem.ID))
+}
+
+func (s *Service) classCourseID(classID uint64) (uint64, bool, error) {
+	if s.db == nil {
+		return classID, true, nil
+	}
+
+	type classCourseRow struct {
+		CourseID uint64 `gorm:"column:course_id"`
+	}
+
+	var row classCourseRow
+	findErr := s.db.Model(&edumodel.Class{}).
+		Select("course_id").
+		Where("id = ?", classID).
+		Scan(&row).Error
+	if findErr != nil {
+		return 0, false, findErr
+	}
+	if row.CourseID == 0 {
+		return 0, false, nil
+	}
+
+	return row.CourseID, true, nil
 }
 
 func (s *Service) UpcomingSchedules(rawClassID string) ([]ScheduleItem, error) {
@@ -2925,14 +3358,20 @@ func normalizeAttendanceItemStatus(status string) string {
 }
 
 func sessionAttendanceStatus(baseStatus string, pendingCount int) string {
-	if baseStatus == "待上课" {
-		return "待上课"
+	switch strings.TrimSpace(baseStatus) {
+	case "待上课", "已调课", "已停课", "请假待批":
+		return strings.TrimSpace(baseStatus)
+	case "已完成":
+		if pendingCount > 0 {
+			return "待签到"
+		}
+		return "已完成"
+	default:
+		if pendingCount > 0 {
+			return "待签到"
+		}
+		return "已完成"
 	}
-	if pendingCount > 0 {
-		return "待签到"
-	}
-
-	return "已完成"
 }
 
 func nextSavedAttendanceStatus(pendingCount int) string {

@@ -10,6 +10,7 @@ import CourseListView from "../views/courses/CourseListView.vue";
 import ClassListView from "../views/classes/ClassListView.vue";
 import ClassDetailView from "../views/classes/ClassDetailView.vue";
 import ScheduleListView from "../views/schedules/ScheduleListView.vue";
+import ScheduleDetailView from "../views/schedules/ScheduleDetailView.vue";
 import AttendanceView from "../views/attendance/AttendanceView.vue";
 import HomeworkView from "../views/homeworks/HomeworkView.vue";
 import NoticeListView from "../views/notices/NoticeListView.vue";
@@ -110,6 +111,16 @@ const router = createRouter({
             title: "排课管理",
             eyebrow: "Schedule Rail",
             description: "看清楚每天谁来上课、什么时候上、在哪里上。",
+          },
+        },
+        {
+          path: "schedules/:id",
+          name: "schedule-detail",
+          component: ScheduleDetailView,
+          meta: {
+            title: "课程安排详情",
+            eyebrow: "Lesson Hub",
+            description: "把一次具体上课的签到、作业、反馈和相关通知入口集中起来。",
           },
         },
         {
