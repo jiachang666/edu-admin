@@ -75,13 +75,15 @@ type Schedule struct {
 }
 
 type Notice struct {
-	ID          int    `json:"id"`
-	Title       string `json:"title"`
-	Category    string `json:"category"`
-	TargetScope string `json:"targetScope"`
-	Status      string `json:"status"`
-	PublishAt   string `json:"publishAt"`
-	Author      string `json:"author"`
+	ID             int    `json:"id"`
+	Title          string `json:"title"`
+	Content        string `json:"content"`
+	Category       string `json:"category"`
+	TargetScope    string `json:"targetScope"`
+	RelatedClassID int    `json:"relatedClassId"`
+	Status         string `json:"status"`
+	PublishAt      string `json:"publishAt"`
+	Author         string `json:"author"`
 }
 
 type Option struct {
@@ -140,6 +142,8 @@ var (
 	homeworkOverrideStore       = map[int]Homework{}
 	feedbackStoreMu             sync.RWMutex
 	feedbackOverrideStore       = map[int]Feedback{}
+	noticeStoreMu               sync.RWMutex
+	noticeOverrideStore         = map[int]Notice{}
 )
 
 func Teachers() []Teacher {
@@ -200,12 +204,37 @@ func Schedules() []Schedule {
 
 func Notices() []Notice {
 	now := time.Now()
-
-	return []Notice{
-		{ID: 1, Title: "端午节放假安排", Category: "校区通知", TargetScope: "全部学员家长", Status: "已发送", PublishAt: now.Add(-6 * time.Hour).Format(dateTimeLayout), Author: "运营老师"},
-		{ID: 2, Title: "六月续费提醒名单确认", Category: "续费提醒", TargetScope: "待续费学员家长", Status: "草稿", PublishAt: now.Add(-2 * time.Hour).Format(dateTimeLayout), Author: "班主任"},
-		{ID: 3, Title: "周末美术课材料准备说明", Category: "课程通知", TargetScope: "少儿创意美术班", Status: "待发送", PublishAt: now.Add(2 * time.Hour).Format(dateTimeLayout), Author: "教务老师"},
+	defaultItems := []Notice{
+		{ID: 1, Title: "端午节放假安排", Content: "本周放假安排请注意查看。", Category: "校区通知", TargetScope: "全部学员家长", RelatedClassID: 0, Status: "已发送", PublishAt: now.Add(-6 * time.Hour).Format(dateTimeLayout), Author: "运营老师"},
+		{ID: 2, Title: "六月续费提醒名单确认", Content: "请班主任确认续费提醒名单，并及时跟进家长沟通。", Category: "续费提醒", TargetScope: "待续费学员家长", RelatedClassID: 0, Status: "草稿", PublishAt: now.Add(-2 * time.Hour).Format(dateTimeLayout), Author: "班主任"},
+		{ID: 3, Title: "周末美术课材料准备说明", Content: "请家长提前准备水彩笔与画纸，课堂上需要统一使用。", Category: "课程通知", TargetScope: "少儿创意美术班", RelatedClassID: 3, Status: "待发送", PublishAt: now.Add(2 * time.Hour).Format(dateTimeLayout), Author: "教务老师"},
 	}
+
+	noticeStoreMu.RLock()
+	defer noticeStoreMu.RUnlock()
+
+	items := make([]Notice, 0, len(defaultItems)+len(noticeOverrideStore))
+	seenIDs := make(map[int]bool, len(defaultItems)+len(noticeOverrideStore))
+
+	for _, item := range defaultItems {
+		if overrideItem, found := noticeOverrideStore[item.ID]; found {
+			items = append(items, overrideItem)
+			seenIDs[item.ID] = true
+			continue
+		}
+
+		items = append(items, item)
+		seenIDs[item.ID] = true
+	}
+
+	for _, item := range noticeOverrideStore {
+		if seenIDs[item.ID] {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	return items
 }
 
 func TeacherOptions() []Option {
@@ -592,6 +621,14 @@ func SaveFeedback(item Feedback) bool {
 	defer feedbackStoreMu.Unlock()
 
 	feedbackOverrideStore[item.ScheduleID] = item
+	return true
+}
+
+func SaveNotice(item Notice) bool {
+	noticeStoreMu.Lock()
+	defer noticeStoreMu.Unlock()
+
+	noticeOverrideStore[item.ID] = item
 	return true
 }
 

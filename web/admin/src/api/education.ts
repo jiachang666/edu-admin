@@ -91,10 +91,28 @@ export type Schedule = {
 export type Notice = {
   id: number;
   title: string;
+  content: string;
   category: string;
   targetScope: string;
+  relatedClassId: number;
   status: string;
   publishAt: string;
+  author: string;
+};
+
+export type NoticeTarget = {
+  name: string;
+  type: string;
+  campus: string;
+};
+
+export type NoticePayload = {
+  title: string;
+  content: string;
+  category: string;
+  targetScope: string;
+  relatedClassId: number;
+  status: string;
   author: string;
 };
 
@@ -213,6 +231,26 @@ export function fetchScheduleList() {
 
 export function fetchNoticeList() {
   return unwrap<PagedResult<Notice>>(http.get("/notices"));
+}
+
+export function fetchNotice(id: number) {
+  return unwrap<Notice>(http.get(`/notices/${id}`));
+}
+
+export function createNotice(payload: NoticePayload) {
+  return unwrap<Notice>(http.post("/notices", payload));
+}
+
+export function updateNotice(id: number, payload: NoticePayload) {
+  return unwrap<Notice>(http.patch(`/notices/${id}`, payload));
+}
+
+export function sendNotice(id: number) {
+  return unwrap<Notice>(http.post(`/notices/${id}/send`));
+}
+
+export function fetchNoticeTargets(id: number) {
+  return unwrap<NoticeTarget[]>(http.get(`/notices/${id}/targets`));
 }
 
 export function fetchAttendanceSessionList() {
