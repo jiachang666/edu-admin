@@ -109,19 +109,31 @@ type ScheduleItem struct {
 }
 
 type NoticeItem struct {
-	ID          uint64 `json:"id"`
-	Title       string `json:"title"`
-	Category    string `json:"category"`
-	TargetScope string `json:"targetScope" gorm:"column:target_scope"`
-	Status      string `json:"status"`
-	PublishAt   string `json:"publishAt"`
-	Author      string `json:"author"`
+	ID             uint64 `json:"id"`
+	Title          string `json:"title"`
+	Content        string `json:"content"`
+	Category       string `json:"category"`
+	TargetScope    string `json:"targetScope" gorm:"column:target_scope"`
+	RelatedClassID uint64 `json:"relatedClassId" gorm:"column:related_class_id"`
+	Status         string `json:"status"`
+	PublishAt      string `json:"publishAt"`
+	Author         string `json:"author"`
 }
 
 type NoticeTargetItem struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
 	Campus string `json:"campus"`
+}
+
+type NoticePayload struct {
+	Title          string `json:"title"`
+	Content        string `json:"content"`
+	Category       string `json:"category"`
+	TargetScope    string `json:"targetScope"`
+	RelatedClassID uint64 `json:"relatedClassId"`
+	Status         string `json:"status"`
+	Author         string `json:"author"`
 }
 
 type AttendanceItem struct {
@@ -1643,8 +1655,10 @@ func (s *Service) Notices() ([]NoticeItem, error) {
 SELECT
   id,
   title,
+  content,
   notice_type AS category,
   target_scope,
+  COALESCE(related_class_id, 0) AS related_class_id,
   status,
   publish_at,
   author_name AS author
@@ -1653,13 +1667,15 @@ ORDER BY COALESCE(publish_at, created_at) DESC, id DESC
 `
 
 	type noticeRow struct {
-		ID          uint64     `gorm:"column:id"`
-		Title       string     `gorm:"column:title"`
-		Category    string     `gorm:"column:category"`
-		TargetScope string     `gorm:"column:target_scope"`
-		Status      string     `gorm:"column:status"`
-		PublishAt   *time.Time `gorm:"column:publish_at"`
-		Author      string     `gorm:"column:author"`
+		ID             uint64     `gorm:"column:id"`
+		Title          string     `gorm:"column:title"`
+		Content        string     `gorm:"column:content"`
+		Category       string     `gorm:"column:category"`
+		TargetScope    string     `gorm:"column:target_scope"`
+		RelatedClassID uint64     `gorm:"column:related_class_id"`
+		Status         string     `gorm:"column:status"`
+		PublishAt      *time.Time `gorm:"column:publish_at"`
+		Author         string     `gorm:"column:author"`
 	}
 
 	var rows []noticeRow
@@ -1671,13 +1687,15 @@ ORDER BY COALESCE(publish_at, created_at) DESC, id DESC
 	items := make([]NoticeItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, NoticeItem{
-			ID:          row.ID,
-			Title:       row.Title,
-			Category:    row.Category,
-			TargetScope: row.TargetScope,
-			Status:      row.Status,
-			PublishAt:   formatDateTime(row.PublishAt),
-			Author:      row.Author,
+			ID:             row.ID,
+			Title:          row.Title,
+			Content:        row.Content,
+			Category:       row.Category,
+			TargetScope:    row.TargetScope,
+			RelatedClassID: row.RelatedClassID,
+			Status:         row.Status,
+			PublishAt:      formatDateTime(row.PublishAt),
+			Author:         row.Author,
 		})
 	}
 
@@ -1731,6 +1749,186 @@ LIMIT 1
 	}
 
 	return []NoticeTargetItem{item}, nil
+}
+
+func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
+	if s.db == nil {
+		notices := demo.Notices()
+		nextID := len(notices) + 1
+
+		now := time.Now()
+		publishAt := now.Format(dateTimeLayout)
+		if input.Status == "草稿" {
+			publishAt = ""
+		}
+
+		item := NoticeItem{
+			ID:             uint64(nextID),
+			Title:          input.Title,
+			Content:        input.Content,
+			Category:       input.Category,
+			TargetScope:    input.TargetScope,
+			RelatedClassID: input.RelatedClassID,
+			Status:         input.Status,
+			PublishAt:      publishAt,
+			Author:         input.Author,
+		}
+
+		demo.SaveNotice(demo.Notice{
+			ID:             nextID,
+			Title:          item.Title,
+			Content:        item.Content,
+			Category:       item.Category,
+			TargetScope:    item.TargetScope,
+			RelatedClassID: int(item.RelatedClassID),
+			Status:         item.Status,
+			PublishAt:      item.PublishAt,
+			Author:         item.Author,
+		})
+
+		return item, nil
+	}
+
+	now := time.Now()
+	record := edumodel.Notice{
+		Title:       input.Title,
+		Content:     input.Content,
+		NoticeType:  input.Category,
+		TargetScope: input.TargetScope,
+		AuthorName:  input.Author,
+		Status:      input.Status,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if input.RelatedClassID > 0 {
+		record.RelatedClassID = &input.RelatedClassID
+	}
+	if input.Status == "已发送" || input.Status == "待发送" {
+		record.PublishAt = &now
+	}
+
+	createErr := s.db.Create(&record).Error
+	if createErr != nil {
+		return NoticeItem{}, createErr
+	}
+
+	createdItem, found, detailErr := s.Notice(fmt.Sprintf("%d", record.ID))
+	if detailErr != nil {
+		return NoticeItem{}, detailErr
+	}
+	if !found {
+		return NoticeItem{
+			ID:             record.ID,
+			Title:          input.Title,
+			Content:        input.Content,
+			Category:       input.Category,
+			TargetScope:    input.TargetScope,
+			RelatedClassID: input.RelatedClassID,
+			Status:         input.Status,
+			PublishAt:      formatDateTime(record.PublishAt),
+			Author:         input.Author,
+		}, nil
+	}
+
+	return createdItem, nil
+}
+
+func (s *Service) UpdateNotice(rawID string, input NoticePayload) (NoticeItem, bool, error) {
+	if s.db == nil {
+		rawItem, found := demo.FindNotice(rawID)
+		if !found {
+			return NoticeItem{}, false, nil
+		}
+
+		publishAt := rawItem.PublishAt
+		if input.Status == "草稿" {
+			publishAt = ""
+		}
+		if publishAt == "" && (input.Status == "待发送" || input.Status == "已发送") {
+			publishAt = time.Now().Format(dateTimeLayout)
+		}
+
+		item := NoticeItem{
+			ID:             uint64(rawItem.ID),
+			Title:          input.Title,
+			Content:        input.Content,
+			Category:       input.Category,
+			TargetScope:    input.TargetScope,
+			RelatedClassID: input.RelatedClassID,
+			Status:         input.Status,
+			PublishAt:      publishAt,
+			Author:         input.Author,
+		}
+
+		demo.SaveNotice(demo.Notice{
+			ID:             rawItem.ID,
+			Title:          item.Title,
+			Content:        item.Content,
+			Category:       item.Category,
+			TargetScope:    item.TargetScope,
+			RelatedClassID: int(item.RelatedClassID),
+			Status:         item.Status,
+			PublishAt:      item.PublishAt,
+			Author:         item.Author,
+		})
+
+		return item, true, nil
+	}
+
+	updateValues := map[string]any{
+		"title":            input.Title,
+		"content":          input.Content,
+		"notice_type":      input.Category,
+		"target_scope":     input.TargetScope,
+		"related_class_id": nil,
+		"status":           input.Status,
+		"author_name":      input.Author,
+		"updated_at":       time.Now(),
+	}
+	if input.RelatedClassID > 0 {
+		updateValues["related_class_id"] = input.RelatedClassID
+	}
+	if input.Status == "草稿" {
+		updateValues["publish_at"] = nil
+	} else {
+		updateValues["publish_at"] = time.Now()
+	}
+
+	updateResult := s.db.Model(&edumodel.Notice{}).
+		Where("id = ?", rawID).
+		Updates(updateValues)
+	if updateResult.Error != nil {
+		return NoticeItem{}, false, updateResult.Error
+	}
+	if updateResult.RowsAffected == 0 {
+		return NoticeItem{}, false, nil
+	}
+
+	updatedItem, found, detailErr := s.Notice(rawID)
+	if detailErr != nil {
+		return NoticeItem{}, false, detailErr
+	}
+
+	return updatedItem, found, nil
+}
+
+func (s *Service) SendNotice(rawID string) (NoticeItem, bool, error) {
+	item, found, itemErr := s.Notice(rawID)
+	if itemErr != nil || !found {
+		return item, found, itemErr
+	}
+
+	input := NoticePayload{
+		Title:          item.Title,
+		Content:        item.Content,
+		Category:       item.Category,
+		TargetScope:    item.TargetScope,
+		RelatedClassID: item.RelatedClassID,
+		Status:         "已发送",
+		Author:         item.Author,
+	}
+
+	return s.UpdateNotice(rawID, input)
 }
 
 func (s *Service) seedIfEmpty() error {
@@ -2069,13 +2267,15 @@ func noticeItemsFromDemo(source []demo.Notice) []NoticeItem {
 	items := make([]NoticeItem, 0, len(source))
 	for _, item := range source {
 		items = append(items, NoticeItem{
-			ID:          uint64(item.ID),
-			Title:       item.Title,
-			Category:    item.Category,
-			TargetScope: item.TargetScope,
-			Status:      item.Status,
-			PublishAt:   item.PublishAt,
-			Author:      item.Author,
+			ID:             uint64(item.ID),
+			Title:          item.Title,
+			Content:        item.Content,
+			Category:       item.Category,
+			TargetScope:    item.TargetScope,
+			RelatedClassID: uint64(item.RelatedClassID),
+			Status:         item.Status,
+			PublishAt:      item.PublishAt,
+			Author:         item.Author,
 		})
 	}
 	return items

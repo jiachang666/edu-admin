@@ -807,6 +807,69 @@ a {
   gap: 2px;
 }
 
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.table-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.table-primary strong {
+  font-size: 14px;
+}
+
+.table-primary small {
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.notice-target-card {
+  padding: 22px;
+}
+
+.notice-target-card__header {
+  margin-bottom: 14px;
+}
+
+.notice-target-list {
+  display: grid;
+  gap: 12px;
+}
+
+.notice-target-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.notice-target-item small,
+.soft-empty {
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
 .login-page {
   display: grid;
   place-items: center;
@@ -1181,7 +1244,8 @@ a {
     grid-template-columns: 1fr;
   }
 
-  .homework-editor-grid {
+  .homework-editor-grid,
+  .dialog-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1258,6 +1322,11 @@ a {
   .page-header,
   .page-toolbar {
     flex-direction: column;
+  }
+
+  .page-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .toolbar-field {
