@@ -112,3 +112,15 @@ type Notice struct {
 	CreatedAt      time.Time  `gorm:"not null"`
 	UpdatedAt      time.Time  `gorm:"not null"`
 }
+
+type AttendanceRecord struct {
+	ID         uint64     `gorm:"primaryKey"`
+	ScheduleID uint64     `gorm:"column:schedule_id;not null;index;uniqueIndex:uk_schedule_student"`
+	StudentID  uint64     `gorm:"column:student_id;not null;index;uniqueIndex:uk_schedule_student"`
+	Status     string     `gorm:"size:32;not null;default:'待确认'"`
+	Remark     string     `gorm:"size:255"`
+	CheckedAt  *time.Time `gorm:"column:checked_at"`
+	UpdatedBy  string     `gorm:"column:updated_by;size:64"`
+	CreatedAt  time.Time  `gorm:"not null"`
+	UpdatedAt  time.Time  `gorm:"not null"`
+}

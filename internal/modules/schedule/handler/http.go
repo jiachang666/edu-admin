@@ -76,16 +76,43 @@ func (h *Handler) makeup(c *gin.Context) {
 }
 
 func (h *Handler) attendance(c *gin.Context) {
+	scheduleItem, found, scheduleErr := h.service.Schedule(c.Param("id"))
+	if scheduleErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found {
+		response.Failed(c, 404, "schedule not found")
+		return
+	}
+
 	items, itemErr := h.service.Attendance(c.Param("id"))
 	if itemErr != nil {
 		response.InternalServerError(c)
 		return
 	}
 
-	response.Success(c, gin.H{"items": items})
+	response.Success(c, gin.H{"schedule": scheduleItem, "items": items})
 }
 
 func (h *Handler) saveAttendance(c *gin.Context) {
+	var payload eduservice.AttendanceSavePayload
+	bindErr := c.ShouldBindJSON(&payload)
+	if bindErr != nil {
+		response.Failed(c, 400, "invalid attendance payload")
+		return
+	}
+
+	saved, saveErr := h.service.SaveAttendance(c.Param("id"), payload)
+	if saveErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !saved {
+		response.Failed(c, 404, "schedule not found")
+		return
+	}
+
 	response.Success(c, gin.H{"saved": true})
 }
 

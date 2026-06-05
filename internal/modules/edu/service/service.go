@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	edumodel "edu-admin/internal/modules/edu/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -123,9 +125,40 @@ type NoticeTargetItem struct {
 }
 
 type AttendanceItem struct {
-	StudentName string `json:"studentName"`
-	Status      string `json:"status"`
-	Remark      string `json:"remark"`
+	StudentID    uint64 `json:"studentId"`
+	StudentName  string `json:"studentName"`
+	Grade        string `json:"grade"`
+	ParentMobile string `json:"parentMobile"`
+	Status       string `json:"status"`
+	Remark       string `json:"remark"`
+}
+
+type AttendanceSessionItem struct {
+	ID               uint64 `json:"id"`
+	ClassID          uint64 `json:"classId"`
+	ClassName        string `json:"className"`
+	CourseName       string `json:"courseName"`
+	TeacherName      string `json:"teacherName"`
+	Campus           string `json:"campus"`
+	Classroom        string `json:"classroom"`
+	LessonDate       string `json:"lessonDate"`
+	LessonTime       string `json:"lessonTime"`
+	AttendanceStatus string `json:"attendanceStatus"`
+	StudentCount     int    `json:"studentCount"`
+	PresentCount     int    `json:"presentCount"`
+	LeaveCount       int    `json:"leaveCount"`
+	AbsentCount      int    `json:"absentCount"`
+	PendingCount     int    `json:"pendingCount"`
+}
+
+type AttendanceSaveItem struct {
+	StudentID uint64 `json:"studentId"`
+	Status    string `json:"status"`
+	Remark    string `json:"remark"`
+}
+
+type AttendanceSavePayload struct {
+	Items []AttendanceSaveItem `json:"items"`
 }
 
 func New(db *gorm.DB) *Service {
@@ -145,6 +178,7 @@ func (s *Service) Bootstrap(autoSeed bool) error {
 		&edumodel.Class{},
 		&edumodel.ClassStudent{},
 		&edumodel.ClassSchedule{},
+		&edumodel.AttendanceRecord{},
 		&edumodel.Notice{},
 	)
 	if migrateErr != nil {
@@ -163,8 +197,6 @@ func (s *Service) Overview() (map[string]any, error) {
 		return demo.Overview(), nil
 	}
 
-	today := time.Now().Format(dateLayout)
-
 	var studentCount int64
 	studentCountErr := s.db.Model(&edumodel.Student{}).Count(&studentCount).Error
 	if studentCountErr != nil {
@@ -177,28 +209,29 @@ func (s *Service) Overview() (map[string]any, error) {
 		return nil, classCountErr
 	}
 
-	var todayCourses int64
-	todayCoursesErr := s.db.Model(&edumodel.ClassSchedule{}).
-		Where("schedule_date = ?", today).
-		Count(&todayCourses).Error
-	if todayCoursesErr != nil {
-		return nil, todayCoursesErr
+	attendanceSessions, sessionErr := s.AttendanceSessions()
+	if sessionErr != nil {
+		return nil, sessionErr
 	}
 
-	var todayPendingCheck int64
-	pendingCheckErr := s.db.Model(&edumodel.ClassSchedule{}).
-		Where("schedule_date = ? AND status = ?", today, "待签到").
-		Count(&todayPendingCheck).Error
-	if pendingCheckErr != nil {
-		return nil, pendingCheckErr
-	}
+	today := time.Now().Format(dateLayout)
+	todayCourses := 0
+	todayPendingCheck := 0
+	todayLeaveCount := 0
+	todayAbsentCount := 0
 
-	var todayLeaveCount int64
-	leaveCountErr := s.db.Model(&edumodel.ClassSchedule{}).
-		Where("schedule_date = ? AND status = ?", today, "请假待批").
-		Count(&todayLeaveCount).Error
-	if leaveCountErr != nil {
-		return nil, leaveCountErr
+	for _, item := range attendanceSessions {
+		if item.LessonDate != today {
+			continue
+		}
+
+		todayCourses++
+		todayLeaveCount += item.LeaveCount
+		todayAbsentCount += item.AbsentCount
+
+		if item.AttendanceStatus == "待签到" {
+			todayPendingCheck++
+		}
 	}
 
 	var pendingActionCount int64
@@ -231,7 +264,7 @@ func (s *Service) Overview() (map[string]any, error) {
 		"todayCourses":       todayCourses,
 		"todayPendingCheck":  todayPendingCheck,
 		"todayLeaveCount":    todayLeaveCount,
-		"todayAbsentCount":   0,
+		"todayAbsentCount":   todayAbsentCount,
 		"studentCount":       studentCount,
 		"classCount":         classCount,
 		"pendingActionCount": pendingActionCount,
@@ -817,47 +850,220 @@ func (s *Service) Attendance(rawScheduleID string) ([]AttendanceItem, error) {
 		return []AttendanceItem{}, nil
 	}
 
+	return s.attendanceFromSchedule(scheduleItem)
+}
+
+func (s *Service) AttendanceSessions() ([]AttendanceSessionItem, error) {
+	schedules, scheduleErr := s.Schedules()
+	if scheduleErr != nil {
+		return nil, scheduleErr
+	}
+
+	items := make([]AttendanceSessionItem, 0, len(schedules))
+	for _, scheduleItem := range schedules {
+		attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+		if attendanceErr != nil {
+			return nil, attendanceErr
+		}
+
+		presentCount, leaveCount, absentCount, pendingCount := summarizeAttendanceItems(attendanceItems)
+
+		items = append(items, AttendanceSessionItem{
+			ID:               scheduleItem.ID,
+			ClassID:          scheduleItem.ClassID,
+			ClassName:        scheduleItem.ClassName,
+			CourseName:       scheduleItem.CourseName,
+			TeacherName:      scheduleItem.TeacherName,
+			Campus:           scheduleItem.Campus,
+			Classroom:        scheduleItem.Classroom,
+			LessonDate:       scheduleItem.LessonDate,
+			LessonTime:       scheduleItem.LessonTime,
+			AttendanceStatus: sessionAttendanceStatus(scheduleItem.AttendanceStatus, pendingCount),
+			StudentCount:     len(attendanceItems),
+			PresentCount:     presentCount,
+			LeaveCount:       leaveCount,
+			AbsentCount:      absentCount,
+			PendingCount:     pendingCount,
+		})
+	}
+
+	return items, nil
+}
+
+func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePayload) (bool, error) {
+	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
+	if scheduleErr != nil {
+		return false, scheduleErr
+	}
+	if !found {
+		return false, nil
+	}
+
+	currentItems, currentErr := s.attendanceFromSchedule(scheduleItem)
+	if currentErr != nil {
+		return false, currentErr
+	}
+
+	payloadMap := make(map[uint64]AttendanceSaveItem, len(payload.Items))
+	for _, item := range payload.Items {
+		payloadMap[item.StudentID] = AttendanceSaveItem{
+			StudentID: item.StudentID,
+			Status:    normalizeAttendanceItemStatus(item.Status),
+			Remark:    strings.TrimSpace(item.Remark),
+		}
+	}
+
+	finalItems := make([]AttendanceItem, 0, len(currentItems))
+	for _, item := range currentItems {
+		nextItem := AttendanceItem{
+			StudentID:    item.StudentID,
+			StudentName:  item.StudentName,
+			Grade:        item.Grade,
+			ParentMobile: item.ParentMobile,
+			Status:       normalizeAttendanceItemStatus(item.Status),
+			Remark:       strings.TrimSpace(item.Remark),
+		}
+
+		if payloadItem, found := payloadMap[item.StudentID]; found {
+			nextItem.Status = normalizeAttendanceItemStatus(payloadItem.Status)
+			nextItem.Remark = strings.TrimSpace(payloadItem.Remark)
+		}
+
+		finalItems = append(finalItems, nextItem)
+	}
+
+	_, _, _, pendingCount := summarizeAttendanceItems(finalItems)
+	nextStatus := nextSavedAttendanceStatus(pendingCount)
+
+	if s.db == nil {
+		demoItems := make([]demo.AttendanceItem, 0, len(finalItems))
+		for _, item := range finalItems {
+			demoItems = append(demoItems, demo.AttendanceItem{
+				StudentID:    int(item.StudentID),
+				StudentName:  item.StudentName,
+				Grade:        item.Grade,
+				ParentMobile: item.ParentMobile,
+				Status:       item.Status,
+				Remark:       item.Remark,
+			})
+		}
+
+		return demo.SaveAttendance(rawScheduleID, demoItems), nil
+	}
+
+	scheduleID, parseErr := strconv.ParseUint(rawScheduleID, 10, 64)
+	if parseErr != nil {
+		return false, nil
+	}
+
+	now := time.Now()
+	records := make([]edumodel.AttendanceRecord, 0, len(finalItems))
+	for _, item := range finalItems {
+		checkedAt := now
+		records = append(records, edumodel.AttendanceRecord{
+			ScheduleID: scheduleID,
+			StudentID:  item.StudentID,
+			Status:     item.Status,
+			Remark:     item.Remark,
+			CheckedAt:  &checkedAt,
+			UpdatedBy:  "System Admin",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		})
+	}
+
+	transactionErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if len(records) > 0 {
+			createErr := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{
+					{Name: "schedule_id"},
+					{Name: "student_id"},
+				},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"status",
+					"remark",
+					"checked_at",
+					"updated_by",
+					"updated_at",
+				}),
+			}).Create(&records).Error
+			if createErr != nil {
+				return createErr
+			}
+		}
+
+		updateErr := tx.Model(&edumodel.ClassSchedule{}).
+			Where("id = ?", scheduleID).
+			Updates(map[string]any{
+				"status":     nextStatus,
+				"updated_at": now,
+			}).Error
+		if updateErr != nil {
+			return updateErr
+		}
+
+		return nil
+	})
+	if transactionErr != nil {
+		return false, transactionErr
+	}
+
+	return true, nil
+}
+
+func (s *Service) attendanceFromSchedule(scheduleItem ScheduleItem) ([]AttendanceItem, error) {
+	if s.db == nil {
+		return attendanceItemsFromDemo(demo.Attendance(fmt.Sprintf("%d", scheduleItem.ID))), nil
+	}
+
 	query := `
 SELECT
-  st.name AS student_name
+  st.id AS student_id,
+  st.name AS student_name,
+  st.grade_name AS grade,
+  COALESCE(g.mobile, '') AS parent_mobile,
+  COALESCE(ar.status, '') AS attendance_status,
+  COALESCE(ar.remark, '') AS attendance_remark
 FROM class_students AS cs
 JOIN students AS st
   ON st.id = cs.student_id
+LEFT JOIN student_guardians AS g
+  ON g.student_id = st.id AND g.is_primary = 1
+LEFT JOIN attendance_records AS ar
+  ON ar.schedule_id = ? AND ar.student_id = st.id
 WHERE cs.class_id = ? AND cs.status = ?
 ORDER BY st.id ASC
 `
 
 	type attendanceRow struct {
-		StudentName string `gorm:"column:student_name"`
+		StudentID        uint64 `gorm:"column:student_id"`
+		StudentName      string `gorm:"column:student_name"`
+		Grade            string `gorm:"column:grade"`
+		ParentMobile     string `gorm:"column:parent_mobile"`
+		AttendanceStatus string `gorm:"column:attendance_status"`
+		AttendanceRemark string `gorm:"column:attendance_remark"`
 	}
 
 	var rows []attendanceRow
-	listErr := s.db.Raw(query, scheduleItem.ClassID, activeClassStudentStatus).Scan(&rows).Error
+	listErr := s.db.Raw(query, scheduleItem.ID, scheduleItem.ClassID, activeClassStudentStatus).Scan(&rows).Error
 	if listErr != nil {
 		return nil, listErr
 	}
 
 	items := make([]AttendanceItem, 0, len(rows))
 	for index, row := range rows {
-		status := "已到"
-		remark := ""
-
-		if scheduleItem.AttendanceStatus == "待签到" && index == 0 {
-			status = "待确认"
-		}
-
-		if scheduleItem.AttendanceStatus == "请假待批" && index == len(rows)-1 {
-			status = "请假"
-		}
-
-		if scheduleItem.AttendanceStatus == "已完成" && index == len(rows)-1 {
-			remark = "课堂表现积极"
+		status := normalizeAttendanceItemStatus(row.AttendanceStatus)
+		if status == "" {
+			status = defaultAttendanceItemStatus(scheduleItem.AttendanceStatus, index, len(rows))
 		}
 
 		items = append(items, AttendanceItem{
-			StudentName: row.StudentName,
-			Status:      status,
-			Remark:      remark,
+			StudentID:    row.StudentID,
+			StudentName:  row.StudentName,
+			Grade:        row.Grade,
+			ParentMobile: row.ParentMobile,
+			Status:       status,
+			Remark:       row.AttendanceRemark,
 		})
 	}
 
@@ -1050,13 +1256,22 @@ func (s *Service) seedIfEmpty() error {
 
 		schedules := []edumodel.ClassSchedule{
 			{ID: 1, ClassID: 1, CourseID: 1, TeacherID: 1, ScheduleType: "常规课", ScheduleDate: today, StartTime: "09:00", EndTime: "10:30", Location: "A201", Status: "待签到", CreatedAt: now, UpdatedAt: now},
-			{ID: 2, ClassID: 2, CourseID: 2, TeacherID: 2, ScheduleType: "常规课", ScheduleDate: today, StartTime: "14:00", EndTime: "15:30", Location: "B103", Status: "请假待批", CreatedAt: now, UpdatedAt: now},
+			{ID: 2, ClassID: 2, CourseID: 2, TeacherID: 2, ScheduleType: "常规课", ScheduleDate: today, StartTime: "14:00", EndTime: "15:30", Location: "B103", Status: "已完成", CreatedAt: now, UpdatedAt: now},
 			{ID: 3, ClassID: 3, CourseID: 3, TeacherID: 3, ScheduleType: "常规课", ScheduleDate: tomorrow, StartTime: "10:00", EndTime: "11:30", Location: "Art-2", Status: "待上课", CreatedAt: now, UpdatedAt: now},
 		}
 
 		scheduleErr := tx.Create(&schedules).Error
 		if scheduleErr != nil {
 			return scheduleErr
+		}
+
+		attendanceRecords := []edumodel.AttendanceRecord{
+			{ID: 1, ScheduleID: 2, StudentID: 3, Status: "请假", Remark: "家长上午已请假", CheckedAt: &now, UpdatedBy: "林老师", CreatedAt: now, UpdatedAt: now},
+		}
+
+		attendanceRecordErr := tx.Create(&attendanceRecords).Error
+		if attendanceRecordErr != nil {
+			return attendanceRecordErr
 		}
 
 		publishAtOne := now.Add(-6 * time.Hour)
@@ -1298,12 +1513,79 @@ func attendanceItemsFromDemo(source []demo.AttendanceItem) []AttendanceItem {
 	items := make([]AttendanceItem, 0, len(source))
 	for _, item := range source {
 		items = append(items, AttendanceItem{
-			StudentName: item.StudentName,
-			Status:      item.Status,
-			Remark:      item.Remark,
+			StudentID:    uint64(item.StudentID),
+			StudentName:  item.StudentName,
+			Grade:        item.Grade,
+			ParentMobile: item.ParentMobile,
+			Status:       item.Status,
+			Remark:       item.Remark,
 		})
 	}
 	return items
+}
+
+func summarizeAttendanceItems(items []AttendanceItem) (int, int, int, int) {
+	presentCount := 0
+	leaveCount := 0
+	absentCount := 0
+	pendingCount := 0
+
+	for _, item := range items {
+		switch normalizeAttendanceItemStatus(item.Status) {
+		case "已到", "补签":
+			presentCount++
+		case "请假":
+			leaveCount++
+		case "缺席":
+			absentCount++
+		default:
+			pendingCount++
+		}
+	}
+
+	return presentCount, leaveCount, absentCount, pendingCount
+}
+
+func defaultAttendanceItemStatus(scheduleStatus string, index int, total int) string {
+	switch scheduleStatus {
+	case "已完成":
+		return "已到"
+	case "请假待批":
+		if total > 0 && index == total-1 {
+			return "请假"
+		}
+		return "已到"
+	default:
+		return "待确认"
+	}
+}
+
+func normalizeAttendanceItemStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "已到", "请假", "缺席", "补签", "待确认":
+		return strings.TrimSpace(status)
+	default:
+		return ""
+	}
+}
+
+func sessionAttendanceStatus(baseStatus string, pendingCount int) string {
+	if baseStatus == "待上课" {
+		return "待上课"
+	}
+	if pendingCount > 0 {
+		return "待签到"
+	}
+
+	return "已完成"
+}
+
+func nextSavedAttendanceStatus(pendingCount int) string {
+	if pendingCount > 0 {
+		return "待签到"
+	}
+
+	return "已完成"
 }
 
 func (s *Service) courseQuery(filter CourseFilter) *gorm.DB {
