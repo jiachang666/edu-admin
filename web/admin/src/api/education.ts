@@ -25,6 +25,30 @@ export type Teacher = {
   status: string;
 };
 
+export type Course = {
+  id: number;
+  name: string;
+  category: string;
+  description: string;
+  ageRange: string;
+  lessonDurationMinutes: number;
+  totalLessons: number;
+  deliveryType: string;
+  status: string;
+  classCount: number;
+};
+
+export type CoursePayload = {
+  name: string;
+  category: string;
+  description: string;
+  ageRange: string;
+  lessonDurationMinutes: number;
+  totalLessons: number;
+  deliveryType: string;
+  status: string;
+};
+
 export type Student = {
   id: number;
   name: string;
@@ -97,6 +121,22 @@ export function fetchDashboardOverview() {
 
 export function fetchTeacherList() {
   return unwrap<PagedResult<Teacher>>(http.get("/teachers"));
+}
+
+export function fetchCourseList(params?: {
+  keyword?: string;
+  category?: string;
+  status?: string;
+}) {
+  return unwrap<PagedResult<Course>>(http.get("/courses", { params }));
+}
+
+export function createCourse(payload: CoursePayload) {
+  return unwrap<Course>(http.post("/courses", payload));
+}
+
+export function updateCourse(id: number, payload: CoursePayload) {
+  return unwrap<Course>(http.patch(`/courses/${id}`, payload));
 }
 
 export function fetchStudentList() {

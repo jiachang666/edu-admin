@@ -50,7 +50,7 @@ func New(cfg *config.Config, logger *log.Logger, eduSvc *eduservice.Service) *gi
 	rolehandler.New().RegisterRoutes(secured.Group("/roles"))
 	teacherhandler.New(eduSvc).RegisterRoutes(secured.Group("/teachers"))
 	studenthandler.New(eduSvc).RegisterRoutes(secured.Group("/students"))
-	coursehandler.New().RegisterRoutes(secured.Group("/courses"))
+	coursehandler.New(eduSvc).RegisterRoutes(secured.Group("/courses"))
 	classhandler.New(eduSvc).RegisterRoutes(secured.Group("/classes"))
 	schedulehandler.New(eduSvc).RegisterRoutes(secured.Group("/schedules"))
 	attendancehandler.New().RegisterRoutes(secured.Group("/attendance"))

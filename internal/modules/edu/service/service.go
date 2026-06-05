@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"edu-admin/internal/modules/demo"
@@ -34,6 +35,36 @@ type TeacherItem struct {
 	WeeklyHours    int    `json:"weeklyHours" gorm:"column:weekly_hours"`
 	Campus         string `json:"campus"`
 	Status         string `json:"status"`
+}
+
+type CourseFilter struct {
+	Keyword  string
+	Category string
+	Status   string
+}
+
+type CoursePayload struct {
+	Name                  string
+	Category              string
+	Description           string
+	AgeRange              string
+	LessonDurationMinutes int
+	TotalLessons          int
+	DeliveryType          string
+	Status                string
+}
+
+type CourseItem struct {
+	ID                    uint64 `json:"id"`
+	Name                  string `json:"name"`
+	Category              string `json:"category"`
+	Description           string `json:"description"`
+	AgeRange              string `json:"ageRange" gorm:"column:age_range"`
+	LessonDurationMinutes int    `json:"lessonDurationMinutes" gorm:"column:lesson_duration_minutes"`
+	TotalLessons          int    `json:"totalLessons" gorm:"column:total_lessons"`
+	DeliveryType          string `json:"deliveryType" gorm:"column:delivery_type"`
+	Status                string `json:"status"`
+	ClassCount            int    `json:"classCount" gorm:"column:class_count"`
 }
 
 type StudentItem struct {
@@ -273,6 +304,146 @@ func (s *Service) TeacherOptions() ([]Option, error) {
 	}
 
 	return options, nil
+}
+
+func (s *Service) Courses(filter CourseFilter) ([]CourseItem, error) {
+	if s.db == nil {
+		return courseItemsFromDemo(demo.Courses()), nil
+	}
+
+	courseQuery := s.courseQuery(filter)
+
+	var items []CourseItem
+	listErr := courseQuery.Order("c.id ASC").Scan(&items).Error
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	return items, nil
+}
+
+func (s *Service) Course(rawID string) (CourseItem, bool, error) {
+	if s.db == nil {
+		return courseItemFromDemo(rawID)
+	}
+
+	courseQuery := s.courseQuery(CourseFilter{}).Where("c.id = ?", rawID)
+
+	var item CourseItem
+	findErr := courseQuery.Limit(1).Scan(&item).Error
+	if findErr != nil {
+		return CourseItem{}, false, findErr
+	}
+
+	if item.ID == 0 {
+		return CourseItem{}, false, nil
+	}
+
+	return item, true, nil
+}
+
+func (s *Service) CourseOptions() ([]Option, error) {
+	if s.db == nil {
+		options := make([]Option, 0, len(demo.CourseOptions()))
+		for _, option := range demo.CourseOptions() {
+			options = append(options, Option{
+				Value: uint64(option.Value),
+				Label: option.Label,
+			})
+		}
+		return options, nil
+	}
+
+	var options []Option
+	listErr := s.db.Model(&edumodel.Course{}).
+		Select("id AS value, name AS label").
+		Order("id ASC").
+		Scan(&options).Error
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	return options, nil
+}
+
+func (s *Service) CreateCourse(input CoursePayload) (CourseItem, error) {
+	if s.db == nil {
+		return courseItemFromPayload(1, input), nil
+	}
+
+	course := edumodel.Course{
+		Name:                  input.Name,
+		Category:              input.Category,
+		Description:           input.Description,
+		AgeRange:              input.AgeRange,
+		LessonDurationMinutes: input.LessonDurationMinutes,
+		TotalLessons:          input.TotalLessons,
+		DeliveryType:          input.DeliveryType,
+		Status:                input.Status,
+	}
+
+	createErr := s.db.Create(&course).Error
+	if createErr != nil {
+		return CourseItem{}, createErr
+	}
+
+	createdItem, found, detailErr := s.Course(fmt.Sprintf("%d", course.ID))
+	if detailErr != nil {
+		return CourseItem{}, detailErr
+	}
+	if !found {
+		return courseItemFromPayload(course.ID, input), nil
+	}
+
+	return createdItem, nil
+}
+
+func (s *Service) UpdateCourse(rawID string, input CoursePayload) (CourseItem, bool, error) {
+	if s.db == nil {
+		item, found, itemErr := courseItemFromDemo(rawID)
+		if itemErr != nil || !found {
+			return item, found, itemErr
+		}
+
+		item.Name = input.Name
+		item.Category = input.Category
+		item.Description = input.Description
+		item.AgeRange = input.AgeRange
+		item.LessonDurationMinutes = input.LessonDurationMinutes
+		item.TotalLessons = input.TotalLessons
+		item.DeliveryType = input.DeliveryType
+		item.Status = input.Status
+
+		return item, true, nil
+	}
+
+	updateValues := map[string]any{
+		"name":                    input.Name,
+		"category":                input.Category,
+		"description":             input.Description,
+		"age_range":               input.AgeRange,
+		"lesson_duration_minutes": input.LessonDurationMinutes,
+		"total_lessons":           input.TotalLessons,
+		"delivery_type":           input.DeliveryType,
+		"status":                  input.Status,
+	}
+
+	updateResult := s.db.Model(&edumodel.Course{}).
+		Where("id = ?", rawID).
+		Updates(updateValues)
+	if updateResult.Error != nil {
+		return CourseItem{}, false, updateResult.Error
+	}
+	if updateResult.RowsAffected == 0 {
+		return CourseItem{}, false, nil
+	}
+
+	updatedItem, found, detailErr := s.Course(rawID)
+	if detailErr != nil {
+		return CourseItem{}, false, detailErr
+	}
+
+	return updatedItem, found, nil
 }
 
 func (s *Service) Students() ([]StudentItem, error) {
@@ -820,9 +991,9 @@ func (s *Service) seedIfEmpty() error {
 		}
 
 		courses := []edumodel.Course{
-			{ID: 1, Name: "数学思维", Category: "数学", AgeRange: "8-10岁", LessonDurationMinutes: 90, TotalLessons: 24, DeliveryType: "线下", Status: "启用", CreatedAt: now, UpdatedAt: now},
-			{ID: 2, Name: "英语阅读", Category: "英语", AgeRange: "9-11岁", LessonDurationMinutes: 90, TotalLessons: 24, DeliveryType: "线下", Status: "启用", CreatedAt: now, UpdatedAt: now},
-			{ID: 3, Name: "创意美术", Category: "美术", AgeRange: "6-8岁", LessonDurationMinutes: 90, TotalLessons: 16, DeliveryType: "线下", Status: "启用", CreatedAt: now, UpdatedAt: now},
+			{ID: 1, Name: "数学思维", Category: "数学", Description: "围绕数感、推理和应用题训练，适合周末持续提升。", AgeRange: "8-10岁", LessonDurationMinutes: 90, TotalLessons: 24, DeliveryType: "线下", Status: "启用", CreatedAt: now, UpdatedAt: now},
+			{ID: 2, Name: "英语阅读", Category: "英语", Description: "通过分级阅读和表达训练，帮助孩子建立英文阅读习惯。", AgeRange: "9-11岁", LessonDurationMinutes: 90, TotalLessons: 24, DeliveryType: "线下", Status: "启用", CreatedAt: now, UpdatedAt: now},
+			{ID: 3, Name: "创意美术", Category: "美术", Description: "以主题创作为主，兼顾色彩感受和动手表达。", AgeRange: "6-8岁", LessonDurationMinutes: 90, TotalLessons: 16, DeliveryType: "线下", Status: "启用", CreatedAt: now, UpdatedAt: now},
 		}
 
 		courseErr := tx.Create(&courses).Error
@@ -940,6 +1111,60 @@ func teacherItemFromDemo(rawID string) (TeacherItem, bool, error) {
 		Campus:         item.Campus,
 		Status:         item.Status,
 	}, true, nil
+}
+
+func courseItemsFromDemo(source []demo.Course) []CourseItem {
+	items := make([]CourseItem, 0, len(source))
+	for _, item := range source {
+		items = append(items, CourseItem{
+			ID:                    uint64(item.ID),
+			Name:                  item.Name,
+			Category:              item.Category,
+			Description:           item.Description,
+			AgeRange:              item.AgeRange,
+			LessonDurationMinutes: item.LessonDurationMinutes,
+			TotalLessons:          item.TotalLessons,
+			DeliveryType:          item.DeliveryType,
+			Status:                item.Status,
+			ClassCount:            item.ClassCount,
+		})
+	}
+	return items
+}
+
+func courseItemFromDemo(rawID string) (CourseItem, bool, error) {
+	item, found := demo.FindCourse(rawID)
+	if !found {
+		return CourseItem{}, false, nil
+	}
+
+	return CourseItem{
+		ID:                    uint64(item.ID),
+		Name:                  item.Name,
+		Category:              item.Category,
+		Description:           item.Description,
+		AgeRange:              item.AgeRange,
+		LessonDurationMinutes: item.LessonDurationMinutes,
+		TotalLessons:          item.TotalLessons,
+		DeliveryType:          item.DeliveryType,
+		Status:                item.Status,
+		ClassCount:            item.ClassCount,
+	}, true, nil
+}
+
+func courseItemFromPayload(id uint64, input CoursePayload) CourseItem {
+	return CourseItem{
+		ID:                    id,
+		Name:                  input.Name,
+		Category:              input.Category,
+		Description:           input.Description,
+		AgeRange:              input.AgeRange,
+		LessonDurationMinutes: input.LessonDurationMinutes,
+		TotalLessons:          input.TotalLessons,
+		DeliveryType:          input.DeliveryType,
+		Status:                input.Status,
+		ClassCount:            0,
+	}
 }
 
 func studentItemsFromDemo() []StudentItem {
@@ -1079,6 +1304,56 @@ func attendanceItemsFromDemo(source []demo.AttendanceItem) []AttendanceItem {
 		})
 	}
 	return items
+}
+
+func (s *Service) courseQuery(filter CourseFilter) *gorm.DB {
+	courseQuery := s.db.Table("courses AS c").
+		Select(`
+c.id,
+c.name,
+c.category,
+COALESCE(c.description, '') AS description,
+c.age_range,
+c.lesson_duration_minutes,
+c.total_lessons,
+c.delivery_type,
+c.status,
+COUNT(DISTINCT cl.id) AS class_count
+`).
+		Joins("LEFT JOIN classes AS cl ON cl.course_id = c.id")
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		courseQuery = courseQuery.Where(
+			"(c.name LIKE ? OR c.category LIKE ? OR c.description LIKE ?)",
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	category := strings.TrimSpace(filter.Category)
+	if category != "" {
+		courseQuery = courseQuery.Where("c.category = ?", category)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		courseQuery = courseQuery.Where("c.status = ?", status)
+	}
+
+	return courseQuery.Group(`
+c.id,
+c.name,
+c.category,
+c.description,
+c.age_range,
+c.lesson_duration_minutes,
+c.total_lessons,
+c.delivery_type,
+c.status
+`)
 }
 
 func formatLessonTime(startTime string, endTime string) string {

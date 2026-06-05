@@ -34,6 +34,19 @@ type Student struct {
 	Status         string `json:"status"`
 }
 
+type Course struct {
+	ID                    int    `json:"id"`
+	Name                  string `json:"name"`
+	Category              string `json:"category"`
+	Description           string `json:"description"`
+	AgeRange              string `json:"ageRange"`
+	LessonDurationMinutes int    `json:"lessonDurationMinutes"`
+	TotalLessons          int    `json:"totalLessons"`
+	DeliveryType          string `json:"deliveryType"`
+	Status                string `json:"status"`
+	ClassCount            int    `json:"classCount"`
+}
+
 type Class struct {
 	ID             int    `json:"id"`
 	Name           string `json:"name"`
@@ -104,6 +117,14 @@ func Students() []Student {
 	}
 }
 
+func Courses() []Course {
+	return []Course{
+		{ID: 1, Name: "数学思维", Category: "数学", Description: "围绕数感、推理和应用题训练，适合周末持续提升。", AgeRange: "8-10岁", LessonDurationMinutes: 90, TotalLessons: 24, DeliveryType: "线下", Status: "启用", ClassCount: 1},
+		{ID: 2, Name: "英语阅读", Category: "英语", Description: "通过分级阅读和表达训练，帮助孩子建立英文阅读习惯。", AgeRange: "9-11岁", LessonDurationMinutes: 90, TotalLessons: 24, DeliveryType: "线下", Status: "启用", ClassCount: 1},
+		{ID: 3, Name: "创意美术", Category: "美术", Description: "以主题创作为主，兼顾色彩感受和动手表达。", AgeRange: "6-8岁", LessonDurationMinutes: 90, TotalLessons: 16, DeliveryType: "线下", Status: "启用", ClassCount: 1},
+	}
+}
+
 func Classes() []Class {
 	return []Class{
 		{ID: 1, Name: "周末奥数提高班", CourseName: "数学思维", TeacherID: 1, TeacherName: "周老师", Campus: "明发校区", StudentCount: 2, Capacity: 16, WeeklySchedule: "周六 09:00-10:30", Status: "开班中"},
@@ -143,6 +164,15 @@ func TeacherOptions() []Option {
 	return options
 }
 
+func CourseOptions() []Option {
+	courses := Courses()
+	options := make([]Option, 0, len(courses))
+	for _, course := range courses {
+		options = append(options, Option{Value: course.ID, Label: course.Name})
+	}
+	return options
+}
+
 func FindTeacher(rawID string) (Teacher, bool) {
 	for _, teacher := range Teachers() {
 		if matchID(teacher.ID, rawID) {
@@ -150,6 +180,15 @@ func FindTeacher(rawID string) (Teacher, bool) {
 		}
 	}
 	return Teacher{}, false
+}
+
+func FindCourse(rawID string) (Course, bool) {
+	for _, course := range Courses() {
+		if matchID(course.ID, rawID) {
+			return course, true
+		}
+	}
+	return Course{}, false
 }
 
 func FindStudent(rawID string) (Student, bool) {
