@@ -104,10 +104,42 @@ type AttendanceItem struct {
 	Remark       string `json:"remark"`
 }
 
+type Homework struct {
+	ID             int    `json:"id"`
+	ScheduleID     int    `json:"scheduleId"`
+	ClassID        int    `json:"classId"`
+	ClassName      string `json:"className"`
+	CourseName     string `json:"courseName"`
+	TeacherName    string `json:"teacherName"`
+	LessonDate     string `json:"lessonDate"`
+	Title          string `json:"title"`
+	Content        string `json:"content"`
+	SubmissionNote string `json:"submissionNote"`
+	Status         string `json:"status"`
+}
+
+type Feedback struct {
+	ID             int    `json:"id"`
+	ScheduleID     int    `json:"scheduleId"`
+	ClassID        int    `json:"classId"`
+	ClassName      string `json:"className"`
+	CourseName     string `json:"courseName"`
+	TeacherName    string `json:"teacherName"`
+	LessonDate     string `json:"lessonDate"`
+	Summary        string `json:"summary"`
+	LearningStatus string `json:"learningStatus"`
+	NextSuggestion string `json:"nextSuggestion"`
+	ParentNotice   string `json:"parentNotice"`
+}
+
 var (
 	attendanceStoreMu           sync.RWMutex
 	attendanceOverrideStore     = map[int][]AttendanceItem{}
 	scheduleStatusOverrideStore = map[int]string{}
+	homeworkStoreMu             sync.RWMutex
+	homeworkOverrideStore       = map[int]Homework{}
+	feedbackStoreMu             sync.RWMutex
+	feedbackOverrideStore       = map[int]Feedback{}
 )
 
 func Teachers() []Teacher {
@@ -414,6 +446,102 @@ func Overview() map[string]any {
 	}
 }
 
+func Homeworks() []Homework {
+	schedules := Schedules()
+	defaultItems := make([]Homework, 0, len(schedules))
+
+	for _, schedule := range schedules {
+		item, found := defaultHomeworkForSchedule(schedule)
+		if found {
+			defaultItems = append(defaultItems, item)
+		}
+	}
+
+	homeworkStoreMu.RLock()
+	defer homeworkStoreMu.RUnlock()
+
+	items := make([]Homework, 0, len(defaultItems))
+	for _, item := range defaultItems {
+		if overrideItem, found := homeworkOverrideStore[item.ScheduleID]; found {
+			items = append(items, overrideItem)
+			continue
+		}
+
+		items = append(items, item)
+	}
+
+	return items
+}
+
+func HomeworkBySchedule(rawScheduleID string) (Homework, bool) {
+	scheduleID, parseErr := strconv.Atoi(rawScheduleID)
+	if parseErr != nil {
+		return Homework{}, false
+	}
+
+	homeworkStoreMu.RLock()
+	overrideItem, hasOverride := homeworkOverrideStore[scheduleID]
+	homeworkStoreMu.RUnlock()
+	if hasOverride {
+		return overrideItem, true
+	}
+
+	schedule, found := FindSchedule(rawScheduleID)
+	if !found {
+		return Homework{}, false
+	}
+
+	return defaultHomeworkForSchedule(schedule)
+}
+
+func Feedbacks() []Feedback {
+	schedules := Schedules()
+	defaultItems := make([]Feedback, 0, len(schedules))
+
+	for _, schedule := range schedules {
+		item, found := defaultFeedbackForSchedule(schedule)
+		if found {
+			defaultItems = append(defaultItems, item)
+		}
+	}
+
+	feedbackStoreMu.RLock()
+	defer feedbackStoreMu.RUnlock()
+
+	items := make([]Feedback, 0, len(defaultItems))
+	for _, item := range defaultItems {
+		if overrideItem, found := feedbackOverrideStore[item.ScheduleID]; found {
+			items = append(items, overrideItem)
+			continue
+		}
+
+		items = append(items, item)
+	}
+
+	return items
+}
+
+func FeedbackBySchedule(rawScheduleID string) (Feedback, bool) {
+	scheduleID, parseErr := strconv.Atoi(rawScheduleID)
+	if parseErr != nil {
+		return Feedback{}, false
+	}
+
+	feedbackStoreMu.RLock()
+	overrideItem, hasOverride := feedbackOverrideStore[scheduleID]
+	feedbackStoreMu.RUnlock()
+	if hasOverride {
+		return overrideItem, true
+	}
+
+	schedule, found := FindSchedule(rawScheduleID)
+	if !found {
+		return Feedback{}, false
+	}
+
+	return defaultFeedbackForSchedule(schedule)
+}
+
 func matchID(id int, rawID string) bool {
 	return strconv.Itoa(id) == rawID
 }
@@ -449,4 +577,90 @@ func deriveAttendanceSessionStatus(items []AttendanceItem) string {
 	}
 
 	return "已完成"
+}
+
+func SaveHomework(item Homework) bool {
+	homeworkStoreMu.Lock()
+	defer homeworkStoreMu.Unlock()
+
+	homeworkOverrideStore[item.ScheduleID] = item
+	return true
+}
+
+func SaveFeedback(item Feedback) bool {
+	feedbackStoreMu.Lock()
+	defer feedbackStoreMu.Unlock()
+
+	feedbackOverrideStore[item.ScheduleID] = item
+	return true
+}
+
+func defaultHomeworkForSchedule(schedule Schedule) (Homework, bool) {
+	switch schedule.ID {
+	case 1:
+		return Homework{
+			ID:             1,
+			ScheduleID:     schedule.ID,
+			ClassID:        schedule.ClassID,
+			ClassName:      schedule.ClassName,
+			CourseName:     schedule.CourseName,
+			TeacherName:    schedule.TeacherName,
+			LessonDate:     schedule.LessonDate,
+			Title:          "思维训练第 4 讲课后练习",
+			Content:        "完成练习册第 12-15 页，并整理两道易错题的解题步骤。",
+			SubmissionNote: "下节课前带回纸质作业，家长协助检查书写完整度。",
+			Status:         "published",
+		}, true
+	case 2:
+		return Homework{
+			ID:             2,
+			ScheduleID:     schedule.ID,
+			ClassID:        schedule.ClassID,
+			ClassName:      schedule.ClassName,
+			CourseName:     schedule.CourseName,
+			TeacherName:    schedule.TeacherName,
+			LessonDate:     schedule.LessonDate,
+			Title:          "英语阅读分级复述任务",
+			Content:        "完成本周阅读卡第 3 篇并录一段 60 秒英文复述。",
+			SubmissionNote: "家长可拍视频发到班级群，老师下次课统一点评。",
+			Status:         "published",
+		}, true
+	default:
+		return Homework{}, false
+	}
+}
+
+func defaultFeedbackForSchedule(schedule Schedule) (Feedback, bool) {
+	switch schedule.ID {
+	case 1:
+		return Feedback{
+			ID:             1,
+			ScheduleID:     schedule.ID,
+			ClassID:        schedule.ClassID,
+			ClassName:      schedule.ClassName,
+			CourseName:     schedule.CourseName,
+			TeacherName:    schedule.TeacherName,
+			LessonDate:     schedule.LessonDate,
+			Summary:        "课堂整体专注度不错，能跟上本节推理题节奏。",
+			LearningStatus: "大部分同学能独立完成基础题，个别同学在多步骤表达上还需要提醒。",
+			NextSuggestion: "下次课前建议再复习一次本周错题，带着自己的思路来讲解。",
+			ParentNotice:   "请家长关注孩子列式步骤是否完整，不只看最终答案。",
+		}, true
+	case 2:
+		return Feedback{
+			ID:             2,
+			ScheduleID:     schedule.ID,
+			ClassID:        schedule.ClassID,
+			ClassName:      schedule.ClassName,
+			CourseName:     schedule.CourseName,
+			TeacherName:    schedule.TeacherName,
+			LessonDate:     schedule.LessonDate,
+			Summary:        "本节重点放在阅读理解和复述表达，课堂互动稳定。",
+			LearningStatus: "学生对关键词抓取已经有进步，但整句复述还需要更多练习。",
+			NextSuggestion: "课后多做跟读和复述训练，下节课继续检查语音语调。",
+			ParentNotice:   "如果孩子本周无法按时提交复述视频，请提前在群里说明。",
+		}, true
+	default:
+		return Feedback{}, false
+	}
 }

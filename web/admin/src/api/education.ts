@@ -130,6 +130,34 @@ export type AttendanceDetail = {
   items: AttendanceEntry[];
 };
 
+export type Homework = {
+  id: number;
+  scheduleId: number;
+  classId: number;
+  className: string;
+  courseName: string;
+  teacherName: string;
+  lessonDate: string;
+  title: string;
+  content: string;
+  submissionNote: string;
+  status: string;
+};
+
+export type Feedback = {
+  id: number;
+  scheduleId: number;
+  classId: number;
+  className: string;
+  courseName: string;
+  teacherName: string;
+  lessonDate: string;
+  summary: string;
+  learningStatus: string;
+  nextSuggestion: string;
+  parentNotice: string;
+};
+
 export type DashboardOverview = {
   todayCourses: number;
   todayPendingCheck: number;
@@ -200,4 +228,40 @@ export function saveScheduleAttendance(
   payload: { items: Array<{ studentId: number; status: string; remark: string }> },
 ) {
   return unwrap<{ saved: boolean }>(http.put(`/schedules/${scheduleId}/attendance`, payload));
+}
+
+export function fetchHomeworkList() {
+  return unwrap<PagedResult<Homework>>(http.get("/homeworks"));
+}
+
+export function fetchScheduleHomework(scheduleId: number) {
+  return unwrap<Partial<Homework>>(http.get(`/schedules/${scheduleId}/homework`));
+}
+
+export function saveScheduleHomework(
+  scheduleId: number,
+  payload: {
+    title: string;
+    content: string;
+    submissionNote: string;
+    status: string;
+  },
+) {
+  return unwrap<Homework>(http.put(`/schedules/${scheduleId}/homework`, payload));
+}
+
+export function fetchScheduleFeedback(scheduleId: number) {
+  return unwrap<Partial<Feedback>>(http.get(`/schedules/${scheduleId}/feedback`));
+}
+
+export function saveScheduleFeedback(
+  scheduleId: number,
+  payload: {
+    summary: string;
+    learningStatus: string;
+    nextSuggestion: string;
+    parentNotice: string;
+  },
+) {
+  return unwrap<Feedback>(http.put(`/schedules/${scheduleId}/feedback`, payload));
 }

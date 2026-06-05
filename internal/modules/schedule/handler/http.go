@@ -117,17 +117,71 @@ func (h *Handler) saveAttendance(c *gin.Context) {
 }
 
 func (h *Handler) homework(c *gin.Context) {
-	response.Success(c, gin.H{"hasHomework": true, "summary": "完成课堂练习册第 12-15 页"})
+	item, found, itemErr := h.service.Homework(c.Param("id"))
+	if itemErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found {
+		response.Success(c, gin.H{"scheduleId": c.Param("id")})
+		return
+	}
+
+	response.Success(c, item)
 }
 
 func (h *Handler) saveHomework(c *gin.Context) {
-	response.Success(c, gin.H{"saved": true})
+	var payload eduservice.HomeworkPayload
+	bindErr := c.ShouldBindJSON(&payload)
+	if bindErr != nil {
+		response.Failed(c, 400, "invalid homework payload")
+		return
+	}
+
+	item, found, saveErr := h.service.SaveHomework(c.Param("id"), payload)
+	if saveErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found {
+		response.Failed(c, 404, "schedule not found")
+		return
+	}
+
+	response.Success(c, item)
 }
 
 func (h *Handler) feedback(c *gin.Context) {
-	response.Success(c, gin.H{"summary": "课堂状态稳定，建议课后复习错题。"})
+	item, found, itemErr := h.service.Feedback(c.Param("id"))
+	if itemErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found {
+		response.Success(c, gin.H{"scheduleId": c.Param("id")})
+		return
+	}
+
+	response.Success(c, item)
 }
 
 func (h *Handler) saveFeedback(c *gin.Context) {
-	response.Success(c, gin.H{"saved": true})
+	var payload eduservice.FeedbackPayload
+	bindErr := c.ShouldBindJSON(&payload)
+	if bindErr != nil {
+		response.Failed(c, 400, "invalid feedback payload")
+		return
+	}
+
+	item, found, saveErr := h.service.SaveFeedback(c.Param("id"), payload)
+	if saveErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found {
+		response.Failed(c, 404, "schedule not found")
+		return
+	}
+
+	response.Success(c, item)
 }
