@@ -159,9 +159,13 @@ var permissionGroups = []PermissionGroup{
 		Description: "管理老师、学员和班级基础台账。",
 		Permissions: []PermissionDefinition{
 			{Code: "teachers:view", Label: "查看老师", Description: "查看老师列表和师资分布。"},
+			{Code: "teachers:manage", Label: "维护老师", Description: "新增和编辑老师资料。"},
 			{Code: "students:view", Label: "查看学员", Description: "查看学员列表与学员详情。"},
+			{Code: "students:manage", Label: "维护学员", Description: "新增和编辑学员资料，以及维护家长信息。"},
 			{Code: "courses:view", Label: "查看课程", Description: "查看课程模板与课程信息。"},
+			{Code: "courses:manage", Label: "维护课程", Description: "新增和编辑课程模板资料。"},
 			{Code: "classes:view", Label: "查看班级", Description: "查看班级列表和班级详情。"},
+			{Code: "classes:manage", Label: "维护班级", Description: "新增和编辑班级资料，以及调整班级学员。"},
 		},
 	},
 	{
@@ -849,6 +853,11 @@ func (s *Service) seedAccessControlIfEmpty(tx *gorm.DB, now time.Time) error {
 		}
 	}
 
+	syncBuiltinRoleErr := syncBuiltinRoles(tx, now)
+	if syncBuiltinRoleErr != nil {
+		return syncBuiltinRoleErr
+	}
+
 	var userCount int64
 	userCountErr := tx.Model(&edumodel.User{}).Count(&userCount).Error
 	if userCountErr != nil {
@@ -1356,9 +1365,13 @@ func defaultRolePermissions(roleCode string) []string {
 		return uniqueSortedStrings([]string{
 			"dashboard:view",
 			"teachers:view",
+			"teachers:manage",
 			"students:view",
+			"students:manage",
 			"courses:view",
+			"courses:manage",
 			"classes:view",
+			"classes:manage",
 			"schedules:view",
 			"attendance:view",
 			"homeworks:view",
@@ -1369,8 +1382,12 @@ func defaultRolePermissions(roleCode string) []string {
 		return uniqueSortedStrings([]string{
 			"dashboard:view",
 			"students:view",
+			"students:manage",
 			"courses:view",
+			"courses:manage",
 			"classes:view",
+			"classes:manage",
+			"teachers:view",
 			"schedules:view",
 			"schedules:manage",
 			"attendance:view",
@@ -1423,6 +1440,68 @@ func buildDefaultRoleItems() []RoleItem {
 	}
 
 	return items
+}
+
+func syncBuiltinRoles(tx *gorm.DB, now time.Time) error {
+	roleDefinitions := []struct {
+		Name        string
+		Code        string
+		Description string
+	}{
+		{Name: "超级管理员", Code: superAdminRoleCode, Description: "负责系统初始化、账号管理和全部模块配置。"},
+		{Name: "机构负责人", Code: "campus_owner", Description: "查看全局业务情况，重点关注老师、学员、班级和通知。"},
+		{Name: "教务/前台", Code: "front_desk", Description: "处理日常录入、排课、签到和通知相关工作。"},
+		{Name: "老师", Code: "teacher", Description: "围绕排课、签到和课后反馈完成自己的教学任务。"},
+	}
+
+	roleMap, roleMapErr := loadRoleCodeMap(tx)
+	if roleMapErr != nil {
+		return roleMapErr
+	}
+
+	for _, definition := range roleDefinitions {
+		role, exists := roleMap[definition.Code]
+		if !exists {
+			role = edumodel.Role{
+				Name:                definition.Name,
+				Code:                definition.Code,
+				Description:         definition.Description,
+				Status:              roleStatusEnabled,
+				PermissionCodesJSON: serializePermissionCodes(defaultRolePermissions(definition.Code)),
+				CreatedAt:           now,
+				UpdatedAt:           now,
+			}
+
+			createRoleErr := tx.Create(&role).Error
+			if createRoleErr != nil {
+				return createRoleErr
+			}
+
+			roleMap[definition.Code] = role
+			continue
+		}
+
+		targetPermissions := defaultRolePermissions(definition.Code)
+		if definition.Code != superAdminRoleCode {
+			targetPermissions = uniqueSortedStrings(append(permissionCodesFromRole(role), targetPermissions...))
+		}
+
+		updateMap := map[string]any{
+			"name":                  definition.Name,
+			"description":           definition.Description,
+			"permission_codes_json": serializePermissionCodes(targetPermissions),
+			"updated_at":            now,
+		}
+
+		updateErr := tx.Model(&edumodel.Role{}).
+			Where("id = ?", role.ID).
+			Updates(updateMap).Error
+		if updateErr != nil {
+			return updateErr
+		}
+	}
+
+	return nil
 }
 
 func loadUserRolesForUsers(tx *gorm.DB, userIDs []uint64) ([]edumodel.UserRole, error) {

@@ -15,11 +15,13 @@ type Teacher struct {
 	ID             int    `json:"id"`
 	Name           string `json:"name"`
 	Mobile         string `json:"mobile"`
+	Title          string `json:"title"`
 	MainSubject    string `json:"mainSubject"`
 	EmploymentType string `json:"employmentType"`
 	WeeklyHours    int    `json:"weeklyHours"`
 	Campus         string `json:"campus"`
 	Status         string `json:"status"`
+	Remark         string `json:"remark"`
 }
 
 type Student struct {
@@ -50,6 +52,7 @@ type Course struct {
 
 type Class struct {
 	ID             int    `json:"id"`
+	CourseID       int    `json:"courseId"`
 	Name           string `json:"name"`
 	CourseName     string `json:"courseName"`
 	TeacherID      int    `json:"teacherId"`
@@ -58,7 +61,10 @@ type Class struct {
 	StudentCount   int    `json:"studentCount"`
 	Capacity       int    `json:"capacity"`
 	WeeklySchedule string `json:"weeklySchedule"`
+	StartDate      string `json:"startDate"`
+	EndDate        string `json:"endDate"`
 	Status         string `json:"status"`
+	Remark         string `json:"remark"`
 }
 
 type Schedule struct {
@@ -148,9 +154,9 @@ var (
 
 func Teachers() []Teacher {
 	return []Teacher{
-		{ID: 1, Name: "周老师", Mobile: "13800000001", MainSubject: "数学思维", EmploymentType: "全职", WeeklyHours: 18, Campus: "明发校区", Status: "在职"},
-		{ID: 2, Name: "林老师", Mobile: "13800000002", MainSubject: "英语阅读", EmploymentType: "全职", WeeklyHours: 16, Campus: "百汇校区", Status: "在职"},
-		{ID: 3, Name: "陈老师", Mobile: "13800000003", MainSubject: "创意美术", EmploymentType: "兼职", WeeklyHours: 12, Campus: "明发校区", Status: "排课中"},
+		{ID: 1, Name: "周老师", Mobile: "13800000001", Title: "资深讲师", MainSubject: "数学思维", EmploymentType: "全职", WeeklyHours: 18, Campus: "明发校区", Status: "在职", Remark: "负责周末奥数主讲。"},
+		{ID: 2, Name: "林老师", Mobile: "13800000002", Title: "主讲老师", MainSubject: "英语阅读", EmploymentType: "全职", WeeklyHours: 16, Campus: "百汇校区", Status: "在职", Remark: "负责英语阅读班级。"},
+		{ID: 3, Name: "陈老师", Mobile: "13800000003", Title: "创意老师", MainSubject: "创意美术", EmploymentType: "兼职", WeeklyHours: 12, Campus: "明发校区", Status: "排课中", Remark: "周末负责美术课。"},
 	}
 }
 
@@ -173,9 +179,9 @@ func Courses() []Course {
 
 func Classes() []Class {
 	return []Class{
-		{ID: 1, Name: "周末奥数提高班", CourseName: "数学思维", TeacherID: 1, TeacherName: "周老师", Campus: "明发校区", StudentCount: 2, Capacity: 16, WeeklySchedule: "周六 09:00-10:30", Status: "开班中"},
-		{ID: 2, Name: "英语阅读进阶班", CourseName: "英语阅读", TeacherID: 2, TeacherName: "林老师", Campus: "百汇校区", StudentCount: 1, Capacity: 12, WeeklySchedule: "周六 14:00-15:30", Status: "开班中"},
-		{ID: 3, Name: "少儿创意美术班", CourseName: "创意美术", TeacherID: 3, TeacherName: "陈老师", Campus: "明发校区", StudentCount: 1, Capacity: 10, WeeklySchedule: "周日 10:00-11:30", Status: "待满班"},
+		{ID: 1, CourseID: 1, Name: "周末奥数提高班", CourseName: "数学思维", TeacherID: 1, TeacherName: "周老师", Campus: "明发校区", StudentCount: 2, Capacity: 16, WeeklySchedule: "周六 09:00-10:30", StartDate: "2026-06-01", EndDate: "2026-09-01", Status: "开班中", Remark: "主打周末提高。"},
+		{ID: 2, CourseID: 2, Name: "英语阅读进阶班", CourseName: "英语阅读", TeacherID: 2, TeacherName: "林老师", Campus: "百汇校区", StudentCount: 1, Capacity: 12, WeeklySchedule: "周六 14:00-15:30", StartDate: "2026-06-01", EndDate: "2026-09-01", Status: "开班中", Remark: "适合高年级阅读提升。"},
+		{ID: 3, CourseID: 3, Name: "少儿创意美术班", CourseName: "创意美术", TeacherID: 3, TeacherName: "陈老师", Campus: "明发校区", StudentCount: 1, Capacity: 10, WeeklySchedule: "周日 10:00-11:30", StartDate: "2026-06-01", EndDate: "2026-08-01", Status: "待满班", Remark: "材料课为主。"},
 	}
 }
 

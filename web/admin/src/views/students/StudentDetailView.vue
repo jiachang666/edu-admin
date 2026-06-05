@@ -1,34 +1,51 @@
 <script setup lang="ts">
-import { ElMessage, type FormInstance, type FormRules } from "element-plus";
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   addStudentsToClass,
+  createStudentGuardian,
+  deleteStudentGuardian,
   fetchClassList,
   fetchStudentDetail,
   removeStudentFromClass,
+  updateStudentGuardian,
   type Homework,
   type SchoolClass,
   type StudentDetail,
   type StudentGuardian,
+  type StudentGuardianPayload,
 } from "../../api/education";
+import { useAuthStore } from "../../stores/auth";
 
 const route = useRoute();
 const router = useRouter();
+const authStore = useAuthStore();
 
 const loading = ref(false);
-const saving = ref(false);
-const dialogVisible = ref(false);
+const classSaving = ref(false);
+const guardianSaving = ref(false);
+const classDialogVisible = ref(false);
+const guardianDialogVisible = ref(false);
+const editingGuardianId = ref<number | null>(null);
 const studentDetail = ref<StudentDetail | null>(null);
 const allClasses = ref<SchoolClass[]>([]);
-const formRef = ref<FormInstance>();
+const classFormRef = ref<FormInstance>();
+const guardianFormRef = ref<FormInstance>();
 
-const form = reactive({
+const classForm = reactive({
   classId: null as number | null,
 });
 
-const rules: FormRules<typeof form> = {
+const guardianForm = reactive<StudentGuardianPayload>(defaultGuardianForm());
+
+const classRules: FormRules<typeof classForm> = {
   classId: [{ required: true, message: "请选择要加入的班级", trigger: "change" }],
+};
+
+const guardianRules: FormRules<StudentGuardianPayload> = {
+  name: [{ required: true, message: "请输入家长姓名", trigger: "blur" }],
+  mobile: [{ required: true, message: "请输入家长手机号", trigger: "blur" }],
 };
 
 const studentId = computed(() => {
@@ -85,15 +102,60 @@ const attendanceSummary = computed(() => {
   );
 });
 
-function openJoinClassDialog() {
-  form.classId = null;
-  dialogVisible.value = true;
-  formRef.value?.clearValidate();
+const canManageStudents = computed(() => authStore.hasPermission("students:manage"));
+const canManageClasses = computed(() => authStore.hasPermission("classes:manage"));
+
+const guardianDialogTitle = computed(() => {
+  return editingGuardianId.value ? "编辑家长" : "新增家长";
+});
+
+function defaultGuardianForm(): StudentGuardianPayload {
+  return {
+    name: "",
+    relation: "",
+    mobile: "",
+    isPrimary: false,
+  };
 }
 
-function closeDialog() {
-  dialogVisible.value = false;
-  form.classId = null;
+function resetGuardianForm() {
+  Object.assign(guardianForm, defaultGuardianForm());
+  editingGuardianId.value = null;
+  guardianFormRef.value?.clearValidate();
+}
+
+function openJoinClassDialog() {
+  classForm.classId = null;
+  classDialogVisible.value = true;
+  classFormRef.value?.clearValidate();
+}
+
+function closeClassDialog() {
+  classDialogVisible.value = false;
+  classForm.classId = null;
+}
+
+function openGuardianCreateDialog() {
+  resetGuardianForm();
+  guardianForm.isPrimary = (studentDetail.value?.guardians.length ?? 0) === 0;
+  guardianDialogVisible.value = true;
+}
+
+function openGuardianEditDialog(guardian: StudentGuardian) {
+  editingGuardianId.value = guardian.id;
+  Object.assign(guardianForm, {
+    name: guardian.name,
+    relation: guardian.relation,
+    mobile: guardian.mobile,
+    isPrimary: guardian.isPrimary,
+  });
+  guardianDialogVisible.value = true;
+  guardianFormRef.value?.clearValidate();
+}
+
+function closeGuardianDialog() {
+  guardianDialogVisible.value = false;
+  resetGuardianForm();
 }
 
 async function loadStudentDetail() {
@@ -121,9 +183,9 @@ async function loadStudentDetail() {
 }
 
 async function handleJoinClass() {
-  const formNode = formRef.value;
+  const formNode = classFormRef.value;
   const currentStudentId = studentId.value;
-  if (!formNode || currentStudentId === null || form.classId === null) {
+  if (!formNode || currentStudentId === null || classForm.classId === null) {
     return;
   }
 
@@ -132,20 +194,21 @@ async function handleJoinClass() {
     return;
   }
 
-  saving.value = true;
+  classSaving.value = true;
 
   try {
-    await addStudentsToClass(form.classId, {
+    await addStudentsToClass(classForm.classId, {
       studentIds: [currentStudentId],
     });
     ElMessage.success("学员已加入班级");
-    closeDialog();
+    closeClassDialog();
     await loadStudentDetail();
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
-    ElMessage.error("加入班级失败");
+    const message = error?.response?.data?.message ?? "加入班级失败";
+    ElMessage.error(message);
   } finally {
-    saving.value = false;
+    classSaving.value = false;
   }
 }
 
@@ -156,12 +219,99 @@ async function handleRemoveFromClass(classId: number) {
   }
 
   try {
+    await ElMessageBox.confirm("移出后这个学员将不再属于该班级，确定继续吗？", "移出班级", {
+      type: "warning",
+      confirmButtonText: "确认移出",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  try {
     await removeStudentFromClass(classId, currentStudentId);
     ElMessage.success("学员已移出班级");
     await loadStudentDetail();
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
-    ElMessage.error("移出班级失败");
+    const message = error?.response?.data?.message ?? "移出班级失败";
+    ElMessage.error(message);
+  }
+}
+
+function buildGuardianPayload(): StudentGuardianPayload {
+  return {
+    name: guardianForm.name.trim(),
+    relation: guardianForm.relation.trim(),
+    mobile: guardianForm.mobile.trim(),
+    isPrimary: guardianForm.isPrimary,
+  };
+}
+
+async function submitGuardianForm() {
+  const formNode = guardianFormRef.value;
+  const currentStudentId = studentId.value;
+  if (!formNode || currentStudentId === null) {
+    return;
+  }
+
+  const valid = await formNode.validate().catch(() => false);
+  if (!valid) {
+    return;
+  }
+
+  guardianSaving.value = true;
+
+  try {
+    const payload = buildGuardianPayload();
+
+    if (editingGuardianId.value) {
+      await updateStudentGuardian(currentStudentId, editingGuardianId.value, payload);
+      ElMessage.success("家长资料已更新");
+    } else {
+      await createStudentGuardian(currentStudentId, payload);
+      ElMessage.success("家长已新增");
+    }
+
+    closeGuardianDialog();
+    await loadStudentDetail();
+  } catch (error: any) {
+    console.error(error);
+    const message = error?.response?.data?.message ?? "家长资料保存失败";
+    ElMessage.error(message);
+  } finally {
+    guardianSaving.value = false;
+  }
+}
+
+async function handleDeleteGuardian(guardian: StudentGuardian) {
+  const currentStudentId = studentId.value;
+  if (currentStudentId === null) {
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `删除后将无法直接联系 ${guardian.name}，确定继续吗？`,
+      "删除家长",
+      {
+        type: "warning",
+        confirmButtonText: "确认删除",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+
+  try {
+    await deleteStudentGuardian(currentStudentId, guardian.id);
+    ElMessage.success("家长已删除");
+    await loadStudentDetail();
+  } catch (error: any) {
+    console.error(error);
+    const message = error?.response?.data?.message ?? "删除家长失败";
+    ElMessage.error(message);
   }
 }
 
@@ -278,7 +428,12 @@ onMounted(() => {
             <h2>家长信息</h2>
             <p class="soft-text">把主要联系人和备用联系人放在一起，方便随时联系。</p>
           </div>
-          <div class="section-note">联系人</div>
+          <div class="page-actions">
+            <div class="section-note">联系人</div>
+            <el-button v-if="canManageStudents" type="primary" @click="openGuardianCreateDialog">
+              新增家长
+            </el-button>
+          </div>
         </div>
 
         <div class="stack-list">
@@ -290,6 +445,10 @@ onMounted(() => {
             <div>
               <strong>{{ guardianLabel(guardian) }}</strong>
               <small>{{ guardian.mobile }} · {{ guardian.isPrimary ? "主要联系人" : "备用联系人" }}</small>
+            </div>
+            <div v-if="canManageStudents" class="table-link-group">
+              <el-button link type="primary" @click="openGuardianEditDialog(guardian)">编辑</el-button>
+              <el-button link type="danger" @click="handleDeleteGuardian(guardian)">删除</el-button>
             </div>
           </article>
 
@@ -313,7 +472,9 @@ onMounted(() => {
         </div>
         <div class="page-actions">
           <div class="section-note">班级关系</div>
-          <el-button type="primary" @click="openJoinClassDialog">加入班级</el-button>
+          <el-button v-if="canManageClasses" type="primary" @click="openJoinClassDialog">
+            加入班级
+          </el-button>
         </div>
       </div>
 
@@ -335,11 +496,18 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="固定排课" prop="weeklySchedule" min-width="180" />
           <el-table-column label="状态" prop="status" width="100" />
-          <el-table-column label="操作" width="160" fixed="right">
+          <el-table-column label="操作" :width="canManageClasses ? 160 : 100" fixed="right">
             <template #default="{ row }">
               <div class="table-link-group">
                 <el-button link type="primary" @click="openClassDetail(row.id)">查看班级</el-button>
-                <el-button link type="danger" @click="handleRemoveFromClass(row.id)">移出班级</el-button>
+                <el-button
+                  v-if="canManageClasses"
+                  link
+                  type="danger"
+                  @click="handleRemoveFromClass(row.id)"
+                >
+                  移出班级
+                </el-button>
               </div>
             </template>
           </el-table-column>
@@ -489,16 +657,16 @@ onMounted(() => {
     </div>
 
     <el-dialog
-      :model-value="dialogVisible"
+      :model-value="classDialogVisible"
       title="把学员加入班级"
       width="560px"
       destroy-on-close
-      @close="closeDialog"
-      @update:model-value="dialogVisible = $event"
+      @close="closeClassDialog"
+      @update:model-value="classDialogVisible = $event"
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
+      <el-form ref="classFormRef" :model="classForm" :rules="classRules" label-position="top">
         <el-form-item label="选择班级" prop="classId">
-          <el-select v-model="form.classId" class="full-width" placeholder="请选择要加入的班级">
+          <el-select v-model="classForm.classId" class="full-width" placeholder="请选择要加入的班级">
             <el-option
               v-for="item in availableClasses"
               :key="item.id"
@@ -511,8 +679,46 @@ onMounted(() => {
 
       <template #footer>
         <div class="dialog-actions">
-          <el-button @click="closeDialog">取消</el-button>
-          <el-button type="primary" :loading="saving" @click="handleJoinClass">确认加入</el-button>
+          <el-button @click="closeClassDialog">取消</el-button>
+          <el-button type="primary" :loading="classSaving" @click="handleJoinClass">确认加入</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      :model-value="guardianDialogVisible"
+      :title="guardianDialogTitle"
+      width="620px"
+      destroy-on-close
+      @close="closeGuardianDialog"
+      @update:model-value="guardianDialogVisible = $event"
+    >
+      <el-form ref="guardianFormRef" :model="guardianForm" :rules="guardianRules" label-position="top">
+        <div class="dialog-grid">
+          <el-form-item label="家长姓名" prop="name">
+            <el-input v-model="guardianForm.name" placeholder="例如：李女士" />
+          </el-form-item>
+          <el-form-item label="关系">
+            <el-input v-model="guardianForm.relation" placeholder="例如：母亲 / 父亲 / 监护人" />
+          </el-form-item>
+          <el-form-item label="手机号" prop="mobile">
+            <el-input v-model="guardianForm.mobile" placeholder="用于联系和通知" />
+          </el-form-item>
+          <el-form-item label="联系优先级">
+            <el-select v-model="guardianForm.isPrimary" placeholder="请选择">
+              <el-option :value="true" label="设为主要联系人" />
+              <el-option :value="false" label="设为备用联系人" />
+            </el-select>
+          </el-form-item>
+        </div>
+      </el-form>
+
+      <template #footer>
+        <div class="dialog-actions">
+          <el-button @click="closeGuardianDialog">取消</el-button>
+          <el-button type="primary" :loading="guardianSaving" @click="submitGuardianForm">
+            保存家长资料
+          </el-button>
         </div>
       </template>
     </el-dialog>

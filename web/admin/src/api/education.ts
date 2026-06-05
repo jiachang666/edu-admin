@@ -18,11 +18,25 @@ export type Teacher = {
   id: number;
   name: string;
   mobile: string;
+  title: string;
   mainSubject: string;
   employmentType: string;
   weeklyHours: number;
   campus: string;
   status: string;
+  remark: string;
+};
+
+export type TeacherPayload = {
+  name: string;
+  mobile: string;
+  title: string;
+  mainSubject: string;
+  employmentType: string;
+  weeklyHours: number;
+  campus: string;
+  status: string;
+  remark: string;
 };
 
 export type Course = {
@@ -62,6 +76,20 @@ export type Student = {
   status: string;
 };
 
+export type StudentPayload = {
+  name: string;
+  gender: string;
+  schoolName: string;
+  gradeName: string;
+  campus: string;
+  remainingHours: number;
+  status: string;
+  remark: string;
+  guardianName: string;
+  guardianMobile: string;
+  guardianRelation: string;
+};
+
 export type StudentProfile = {
   id: number;
   name: string;
@@ -78,6 +106,13 @@ export type StudentProfile = {
 
 export type StudentGuardian = {
   id: number;
+  name: string;
+  relation: string;
+  mobile: string;
+  isPrimary: boolean;
+};
+
+export type StudentGuardianPayload = {
   name: string;
   relation: string;
   mobile: string;
@@ -110,6 +145,7 @@ export type StudentDetail = {
 
 export type SchoolClass = {
   id: number;
+  courseId: number;
   name: string;
   courseName: string;
   teacherId: number;
@@ -118,7 +154,23 @@ export type SchoolClass = {
   studentCount: number;
   capacity: number;
   weeklySchedule: string;
+  startDate: string;
+  endDate: string;
   status: string;
+  remark: string;
+};
+
+export type SchoolClassPayload = {
+  name: string;
+  courseId: number;
+  teacherId: number;
+  campus: string;
+  capacity: number;
+  weeklySchedule: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  remark: string;
 };
 
 export type ClassDetail = {
@@ -331,6 +383,11 @@ export type OperationLog = {
   createdAt: string;
 };
 
+export type SelectOption = {
+  value: number;
+  label: string;
+};
+
 async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>) {
   const response = await request;
   return response.data.data;
@@ -396,6 +453,18 @@ export function fetchTeacherList() {
   return unwrap<PagedResult<Teacher>>(http.get("/teachers"));
 }
 
+export function createTeacher(payload: TeacherPayload) {
+  return unwrap<Teacher>(http.post("/teachers", payload));
+}
+
+export function updateTeacher(id: number, payload: TeacherPayload) {
+  return unwrap<Teacher>(http.patch(`/teachers/${id}`, payload));
+}
+
+export function fetchTeacherOptions() {
+  return unwrap<SelectOption[]>(http.get("/teachers/options"));
+}
+
 export function fetchCourseList(params?: {
   keyword?: string;
   category?: string;
@@ -412,16 +481,52 @@ export function updateCourse(id: number, payload: CoursePayload) {
   return unwrap<Course>(http.patch(`/courses/${id}`, payload));
 }
 
+export function fetchCourseOptions() {
+  return unwrap<SelectOption[]>(http.get("/courses/options"));
+}
+
 export function fetchStudentList() {
   return unwrap<PagedResult<Student>>(http.get("/students"));
+}
+
+export function createStudent(payload: StudentPayload) {
+  return unwrap<StudentDetail>(http.post("/students", payload));
+}
+
+export function updateStudent(id: number, payload: StudentPayload) {
+  return unwrap<StudentDetail>(http.patch(`/students/${id}`, payload));
 }
 
 export function fetchStudentDetail(studentId: number) {
   return unwrap<StudentDetail>(http.get(`/students/${studentId}`));
 }
 
+export function createStudentGuardian(studentId: number, payload: StudentGuardianPayload) {
+  return unwrap<StudentGuardian>(http.post(`/students/${studentId}/guardians`, payload));
+}
+
+export function updateStudentGuardian(
+  studentId: number,
+  guardianId: number,
+  payload: StudentGuardianPayload,
+) {
+  return unwrap<StudentGuardian>(http.patch(`/students/${studentId}/guardians/${guardianId}`, payload));
+}
+
+export function deleteStudentGuardian(studentId: number, guardianId: number) {
+  return unwrap<{ deleted: boolean }>(http.delete(`/students/${studentId}/guardians/${guardianId}`));
+}
+
 export function fetchClassList() {
   return unwrap<PagedResult<SchoolClass>>(http.get("/classes"));
+}
+
+export function createClass(payload: SchoolClassPayload) {
+  return unwrap<SchoolClass>(http.post("/classes", payload));
+}
+
+export function updateClass(id: number, payload: SchoolClassPayload) {
+  return unwrap<SchoolClass>(http.patch(`/classes/${id}`, payload));
 }
 
 export function fetchClassDetail(classId: number) {

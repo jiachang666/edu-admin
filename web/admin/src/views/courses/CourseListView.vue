@@ -8,6 +8,9 @@ import {
   type Course,
   type CoursePayload,
 } from "../../api/education";
+import { useAuthStore } from "../../stores/auth";
+
+const authStore = useAuthStore();
 
 const statusOptions = ["启用", "停用"];
 const deliveryTypeOptions = ["线下", "线上", "线上线下结合"];
@@ -69,6 +72,8 @@ const linkedClassCount = computed(() => {
 const dialogTitle = computed(() => {
   return editingCourseId.value ? "编辑课程" : "新增课程";
 });
+
+const canManageCourses = computed(() => authStore.hasPermission("courses:manage"));
 
 function defaultForm(): CoursePayload {
   return {
@@ -236,7 +241,10 @@ onMounted(() => {
           <h2>课程列表</h2>
           <p class="soft-text">先把课程模板信息补齐，后面的建班和排课才有清晰基础。</p>
         </div>
-        <div class="section-note">课程视图</div>
+        <div class="page-actions">
+          <div class="section-note">课程视图</div>
+          <el-button v-if="canManageCourses" type="success" @click="openCreateDialog">新增课程</el-button>
+        </div>
       </div>
 
       <div class="page-toolbar">
@@ -279,7 +287,6 @@ onMounted(() => {
         <div class="toolbar-actions">
           <el-button @click="handleReset">重置</el-button>
           <el-button type="primary" @click="handleSearch">搜索</el-button>
-          <el-button type="success" @click="openCreateDialog">新增课程</el-button>
         </div>
       </div>
 
@@ -309,7 +316,7 @@ onMounted(() => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="100" fixed="right">
+          <el-table-column v-if="canManageCourses" label="操作" width="100" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEditDialog(row)">
                 编辑

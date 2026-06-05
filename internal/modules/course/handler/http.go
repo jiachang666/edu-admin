@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
 	"strings"
@@ -36,6 +37,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	if !permission.HasFromContext(c, "courses:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	filter := eduservice.CourseFilter{
 		Keyword:  c.Query("keyword"),
 		Category: c.Query("category"),
@@ -52,6 +58,11 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 func (h *Handler) create(c *gin.Context) {
+	if !permission.HasFromContext(c, "courses:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindCoursePayload(c)
 	if !ok {
 		return
@@ -67,6 +78,11 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) options(c *gin.Context) {
+	if !permission.HasFromContext(c, "courses:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	options, optionErr := h.service.CourseOptions()
 	if optionErr != nil {
 		response.InternalServerError(c)
@@ -77,6 +93,11 @@ func (h *Handler) options(c *gin.Context) {
 }
 
 func (h *Handler) detail(c *gin.Context) {
+	if !permission.HasFromContext(c, "courses:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	course, found, courseErr := h.service.Course(c.Param("id"))
 	if courseErr != nil {
 		response.InternalServerError(c)
@@ -91,6 +112,11 @@ func (h *Handler) detail(c *gin.Context) {
 }
 
 func (h *Handler) update(c *gin.Context) {
+	if !permission.HasFromContext(c, "courses:manage") {
+		response.Forbidden(c)
+		return
+	}
+
 	input, ok := bindCoursePayload(c)
 	if !ok {
 		return

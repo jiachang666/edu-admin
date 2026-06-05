@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -32,17 +33,31 @@ type TeacherItem struct {
 	ID             uint64 `json:"id"`
 	Name           string `json:"name"`
 	Mobile         string `json:"mobile"`
+	Title          string `json:"title"`
 	MainSubject    string `json:"mainSubject" gorm:"column:main_subject"`
 	EmploymentType string `json:"employmentType" gorm:"column:employment_type"`
 	WeeklyHours    int    `json:"weeklyHours" gorm:"column:weekly_hours"`
 	Campus         string `json:"campus"`
 	Status         string `json:"status"`
+	Remark         string `json:"remark"`
 }
 
 type CourseFilter struct {
 	Keyword  string
 	Category string
 	Status   string
+}
+
+type TeacherPayload struct {
+	Name           string
+	Mobile         string
+	Title          string
+	MainSubject    string
+	EmploymentType string
+	WeeklyHours    int
+	Campus         string
+	Status         string
+	Remark         string
 }
 
 type CoursePayload struct {
@@ -82,6 +97,20 @@ type StudentItem struct {
 	Status         string `json:"status"`
 }
 
+type StudentPayload struct {
+	Name            string
+	Gender          string
+	SchoolName      string
+	GradeName       string
+	Campus          string
+	RemainingHours  int
+	Status          string
+	Remark          string
+	GuardianName    string
+	GuardianMobile  string
+	GuardianRelation string
+}
+
 type StudentProfile struct {
 	ID             uint64 `json:"id"`
 	Name           string `json:"name"`
@@ -104,6 +133,13 @@ type StudentGuardianItem struct {
 	IsPrimary bool   `json:"isPrimary"`
 }
 
+type StudentGuardianPayload struct {
+	Name      string
+	Relation  string
+	Mobile    string
+	IsPrimary bool
+}
+
 type StudentAttendanceRecord struct {
 	ScheduleID  uint64 `json:"scheduleId"`
 	ClassID     uint64 `json:"classId"`
@@ -120,6 +156,7 @@ type StudentAttendanceRecord struct {
 
 type ClassItem struct {
 	ID             uint64 `json:"id"`
+	CourseID       uint64 `json:"courseId" gorm:"column:course_id"`
 	Name           string `json:"name"`
 	CourseName     string `json:"courseName" gorm:"column:course_name"`
 	TeacherID      uint64 `json:"teacherId" gorm:"column:teacher_id"`
@@ -128,7 +165,10 @@ type ClassItem struct {
 	StudentCount   int    `json:"studentCount" gorm:"column:student_count"`
 	Capacity       int    `json:"capacity"`
 	WeeklySchedule string `json:"weeklySchedule" gorm:"column:weekly_schedule"`
+	StartDate      string `json:"startDate" gorm:"column:start_date"`
+	EndDate        string `json:"endDate" gorm:"column:end_date"`
 	Status         string `json:"status"`
+	Remark         string `json:"remark"`
 }
 
 type StudentDetail struct {
@@ -152,6 +192,19 @@ type ClassDetail struct {
 
 type ClassStudentPayload struct {
 	StudentIDs []uint64 `json:"studentIds"`
+}
+
+type ClassPayload struct {
+	Name           string
+	CourseID       uint64
+	TeacherID      uint64
+	Campus         string
+	Capacity       int
+	WeeklySchedule string
+	StartDate      string
+	EndDate        string
+	Status         string
+	Remark         string
 }
 
 type ScheduleItem struct {
@@ -430,7 +483,7 @@ func (s *Service) Teachers() ([]TeacherItem, error) {
 
 	var items []TeacherItem
 	listErr := s.db.Model(&edumodel.Teacher{}).
-		Select("id, name, mobile, main_subject, employment_type, weekly_hours, campus, status").
+		Select("id, name, mobile, title, main_subject, employment_type, weekly_hours, campus, status, remark").
 		Order("id ASC").
 		Scan(&items).Error
 	if listErr != nil {
@@ -447,7 +500,7 @@ func (s *Service) Teacher(rawID string) (TeacherItem, bool, error) {
 
 	var item TeacherItem
 	findErr := s.db.Model(&edumodel.Teacher{}).
-		Select("id, name, mobile, main_subject, employment_type, weekly_hours, campus, status").
+		Select("id, name, mobile, title, main_subject, employment_type, weekly_hours, campus, status, remark").
 		Where("id = ?", rawID).
 		Scan(&item).Error
 	if findErr != nil {
@@ -459,6 +512,113 @@ func (s *Service) Teacher(rawID string) (TeacherItem, bool, error) {
 	}
 
 	return item, true, nil
+}
+
+func (s *Service) CreateTeacher(input TeacherPayload) (TeacherItem, error) {
+	if s.db == nil {
+		return TeacherItem{
+			ID:             1,
+			Name:           input.Name,
+			Mobile:         input.Mobile,
+			Title:          input.Title,
+			MainSubject:    input.MainSubject,
+			EmploymentType: input.EmploymentType,
+			WeeklyHours:    input.WeeklyHours,
+			Campus:         input.Campus,
+			Status:         input.Status,
+			Remark:         input.Remark,
+		}, nil
+	}
+
+	now := time.Now()
+	teacher := edumodel.Teacher{
+		Name:           input.Name,
+		Mobile:         input.Mobile,
+		Title:          input.Title,
+		MainSubject:    input.MainSubject,
+		EmploymentType: input.EmploymentType,
+		WeeklyHours:    input.WeeklyHours,
+		Campus:         input.Campus,
+		Status:         input.Status,
+		Remark:         input.Remark,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	createErr := s.db.Create(&teacher).Error
+	if createErr != nil {
+		return TeacherItem{}, createErr
+	}
+
+	createdItem, found, teacherErr := s.Teacher(fmt.Sprintf("%d", teacher.ID))
+	if teacherErr != nil {
+		return TeacherItem{}, teacherErr
+	}
+	if !found {
+		return TeacherItem{
+			ID:             teacher.ID,
+			Name:           teacher.Name,
+			Mobile:         teacher.Mobile,
+			Title:          teacher.Title,
+			MainSubject:    teacher.MainSubject,
+			EmploymentType: teacher.EmploymentType,
+			WeeklyHours:    teacher.WeeklyHours,
+			Campus:         teacher.Campus,
+			Status:         teacher.Status,
+			Remark:         teacher.Remark,
+		}, nil
+	}
+
+	return createdItem, nil
+}
+
+func (s *Service) UpdateTeacher(rawID string, input TeacherPayload) (TeacherItem, bool, error) {
+	if s.db == nil {
+		item, found, teacherErr := s.Teacher(rawID)
+		if teacherErr != nil || !found {
+			return item, found, teacherErr
+		}
+
+		item.Name = input.Name
+		item.Mobile = input.Mobile
+		item.Title = input.Title
+		item.MainSubject = input.MainSubject
+		item.EmploymentType = input.EmploymentType
+		item.WeeklyHours = input.WeeklyHours
+		item.Campus = input.Campus
+		item.Status = input.Status
+		item.Remark = input.Remark
+
+		return item, true, nil
+	}
+
+	updateResult := s.db.Model(&edumodel.Teacher{}).
+		Where("id = ?", rawID).
+		Updates(map[string]any{
+			"name":            input.Name,
+			"mobile":          input.Mobile,
+			"title":           input.Title,
+			"main_subject":    input.MainSubject,
+			"employment_type": input.EmploymentType,
+			"weekly_hours":    input.WeeklyHours,
+			"campus":          input.Campus,
+			"status":          input.Status,
+			"remark":          input.Remark,
+			"updated_at":      time.Now(),
+		})
+	if updateResult.Error != nil {
+		return TeacherItem{}, false, updateResult.Error
+	}
+	if updateResult.RowsAffected == 0 {
+		return TeacherItem{}, false, nil
+	}
+
+	updatedItem, found, teacherErr := s.Teacher(rawID)
+	if teacherErr != nil {
+		return TeacherItem{}, false, teacherErr
+	}
+
+	return updatedItem, found, nil
 }
 
 func (s *Service) TeacherOptions() ([]Option, error) {
@@ -758,6 +918,334 @@ ORDER BY is_primary DESC, id ASC
 	return items, nil
 }
 
+func (s *Service) CreateStudent(input StudentPayload) (StudentDetail, error) {
+	if s.db == nil {
+		return StudentDetail{}, nil
+	}
+
+	now := time.Now()
+	var createdStudentID uint64
+
+	createErr := s.db.Transaction(func(tx *gorm.DB) error {
+		student := edumodel.Student{
+			Name:           input.Name,
+			Gender:         input.Gender,
+			SchoolName:     input.SchoolName,
+			GradeName:      input.GradeName,
+			Campus:         input.Campus,
+			RemainingHours: input.RemainingHours,
+			Status:         input.Status,
+			Remark:         input.Remark,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+
+		createStudentErr := tx.Create(&student).Error
+		if createStudentErr != nil {
+			return createStudentErr
+		}
+
+		guardian := edumodel.StudentGuardian{
+			StudentID: student.ID,
+			Name:      input.GuardianName,
+			Relation:  input.GuardianRelation,
+			Mobile:    input.GuardianMobile,
+			IsPrimary: true,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		createGuardianErr := tx.Create(&guardian).Error
+		if createGuardianErr != nil {
+			return createGuardianErr
+		}
+
+		createdStudentID = student.ID
+		return nil
+	})
+	if createErr != nil {
+		return StudentDetail{}, createErr
+	}
+
+	detail, found, detailErr := s.StudentDetail(fmt.Sprintf("%d", createdStudentID))
+	if detailErr != nil {
+		return StudentDetail{}, detailErr
+	}
+	if !found {
+		return StudentDetail{}, nil
+	}
+
+	return detail, nil
+}
+
+func (s *Service) UpdateStudent(rawID string, input StudentPayload) (StudentDetail, bool, error) {
+	if s.db == nil {
+		detail, found, detailErr := s.StudentDetail(rawID)
+		if detailErr != nil || !found {
+			return detail, found, detailErr
+		}
+
+		return detail, true, nil
+	}
+
+	studentID, parseErr := strconv.ParseUint(rawID, 10, 64)
+	if parseErr != nil {
+		return StudentDetail{}, false, nil
+	}
+
+	updateErr := s.db.Transaction(func(tx *gorm.DB) error {
+		updateResult := tx.Model(&edumodel.Student{}).
+			Where("id = ?", studentID).
+			Updates(map[string]any{
+				"name":            input.Name,
+				"gender":          input.Gender,
+				"school_name":     input.SchoolName,
+				"grade_name":      input.GradeName,
+				"campus":          input.Campus,
+				"remaining_hours": input.RemainingHours,
+				"status":          input.Status,
+				"remark":          input.Remark,
+				"updated_at":      time.Now(),
+			})
+		if updateResult.Error != nil {
+			return updateResult.Error
+		}
+		if updateResult.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		var primaryGuardian edumodel.StudentGuardian
+		findGuardianErr := tx.
+			Where("student_id = ? AND is_primary = ?", studentID, true).
+			Order("id ASC").
+			Take(&primaryGuardian).Error
+		if errors.Is(findGuardianErr, gorm.ErrRecordNotFound) {
+			guardian := edumodel.StudentGuardian{
+				StudentID: studentID,
+				Name:      input.GuardianName,
+				Relation:  input.GuardianRelation,
+				Mobile:    input.GuardianMobile,
+				IsPrimary: true,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			return tx.Create(&guardian).Error
+		}
+		if findGuardianErr != nil {
+			return findGuardianErr
+		}
+
+		return tx.Model(&edumodel.StudentGuardian{}).
+			Where("id = ?", primaryGuardian.ID).
+			Updates(map[string]any{
+				"name":       input.GuardianName,
+				"relation":   input.GuardianRelation,
+				"mobile":     input.GuardianMobile,
+				"is_primary": true,
+				"updated_at": time.Now(),
+			}).Error
+	})
+	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
+		return StudentDetail{}, false, nil
+	}
+	if updateErr != nil {
+		return StudentDetail{}, false, updateErr
+	}
+
+	detail, found, detailErr := s.StudentDetail(rawID)
+	if detailErr != nil {
+		return StudentDetail{}, false, detailErr
+	}
+
+	return detail, found, nil
+}
+
+func (s *Service) CreateStudentGuardian(rawStudentID string, input StudentGuardianPayload) (StudentGuardianItem, bool, error) {
+	if s.db == nil {
+		return StudentGuardianItem{}, false, nil
+	}
+
+	studentID, parseErr := strconv.ParseUint(rawStudentID, 10, 64)
+	if parseErr != nil {
+		return StudentGuardianItem{}, false, nil
+	}
+
+	var createdGuardian edumodel.StudentGuardian
+	createErr := s.db.Transaction(func(tx *gorm.DB) error {
+		var student edumodel.Student
+		findStudentErr := tx.Where("id = ?", studentID).Take(&student).Error
+		if findStudentErr != nil {
+			return findStudentErr
+		}
+
+		if input.IsPrimary {
+			resetPrimaryErr := tx.Model(&edumodel.StudentGuardian{}).
+				Where("student_id = ?", studentID).
+				Update("is_primary", false).Error
+			if resetPrimaryErr != nil {
+				return resetPrimaryErr
+			}
+		}
+
+		now := time.Now()
+		createdGuardian = edumodel.StudentGuardian{
+			StudentID: studentID,
+			Name:      input.Name,
+			Relation:  input.Relation,
+			Mobile:    input.Mobile,
+			IsPrimary: input.IsPrimary,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		return tx.Create(&createdGuardian).Error
+	})
+	if errors.Is(createErr, gorm.ErrRecordNotFound) {
+		return StudentGuardianItem{}, false, nil
+	}
+	if createErr != nil {
+		return StudentGuardianItem{}, false, createErr
+	}
+
+	return StudentGuardianItem{
+		ID:        createdGuardian.ID,
+		Name:      createdGuardian.Name,
+		Relation:  createdGuardian.Relation,
+		Mobile:    createdGuardian.Mobile,
+		IsPrimary: createdGuardian.IsPrimary,
+	}, true, nil
+}
+
+func (s *Service) UpdateStudentGuardian(rawStudentID string, rawGuardianID string, input StudentGuardianPayload) (StudentGuardianItem, bool, error) {
+	if s.db == nil {
+		return StudentGuardianItem{}, false, nil
+	}
+
+	studentID, studentParseErr := strconv.ParseUint(rawStudentID, 10, 64)
+	if studentParseErr != nil {
+		return StudentGuardianItem{}, false, nil
+	}
+
+	guardianID, guardianParseErr := strconv.ParseUint(rawGuardianID, 10, 64)
+	if guardianParseErr != nil {
+		return StudentGuardianItem{}, false, nil
+	}
+
+	updateErr := s.db.Transaction(func(tx *gorm.DB) error {
+		var guardian edumodel.StudentGuardian
+		findGuardianErr := tx.Where("id = ? AND student_id = ?", guardianID, studentID).Take(&guardian).Error
+		if findGuardianErr != nil {
+			return findGuardianErr
+		}
+
+		if input.IsPrimary {
+			resetPrimaryErr := tx.Model(&edumodel.StudentGuardian{}).
+				Where("student_id = ?", studentID).
+				Update("is_primary", false).Error
+			if resetPrimaryErr != nil {
+				return resetPrimaryErr
+			}
+		}
+
+		return tx.Model(&edumodel.StudentGuardian{}).
+			Where("id = ?", guardianID).
+			Updates(map[string]any{
+				"name":       input.Name,
+				"relation":   input.Relation,
+				"mobile":     input.Mobile,
+				"is_primary": input.IsPrimary,
+				"updated_at": time.Now(),
+			}).Error
+	})
+	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
+		return StudentGuardianItem{}, false, nil
+	}
+	if updateErr != nil {
+		return StudentGuardianItem{}, false, updateErr
+	}
+
+	guardians, guardianErr := s.StudentGuardians(rawStudentID)
+	if guardianErr != nil {
+		return StudentGuardianItem{}, false, guardianErr
+	}
+
+	for _, guardian := range guardians {
+		if guardian.ID == guardianID {
+			return guardian, true, nil
+		}
+	}
+
+	return StudentGuardianItem{}, false, nil
+}
+
+func (s *Service) DeleteStudentGuardian(rawStudentID string, rawGuardianID string) (bool, error) {
+	if s.db == nil {
+		return false, nil
+	}
+
+	studentID, studentParseErr := strconv.ParseUint(rawStudentID, 10, 64)
+	if studentParseErr != nil {
+		return false, nil
+	}
+
+	guardianID, guardianParseErr := strconv.ParseUint(rawGuardianID, 10, 64)
+	if guardianParseErr != nil {
+		return false, nil
+	}
+
+	deleteErr := s.db.Transaction(func(tx *gorm.DB) error {
+		var guardians []edumodel.StudentGuardian
+		listErr := tx.Where("student_id = ?", studentID).Order("id ASC").Find(&guardians).Error
+		if listErr != nil {
+			return listErr
+		}
+		if len(guardians) == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		var targetFound bool
+		var removedPrimary bool
+		var fallbackGuardianID uint64
+		for _, guardian := range guardians {
+			if guardian.ID == guardianID {
+				targetFound = true
+				removedPrimary = guardian.IsPrimary
+				continue
+			}
+			if fallbackGuardianID == 0 {
+				fallbackGuardianID = guardian.ID
+			}
+		}
+		if !targetFound {
+			return gorm.ErrRecordNotFound
+		}
+
+		deleteResult := tx.Where("id = ? AND student_id = ?", guardianID, studentID).Delete(&edumodel.StudentGuardian{})
+		if deleteResult.Error != nil {
+			return deleteResult.Error
+		}
+		if deleteResult.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		if removedPrimary && fallbackGuardianID > 0 {
+			return tx.Model(&edumodel.StudentGuardian{}).
+				Where("id = ?", fallbackGuardianID).
+				Update("is_primary", true).Error
+		}
+
+		return nil
+	})
+	if errors.Is(deleteErr, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if deleteErr != nil {
+		return false, deleteErr
+	}
+
+	return true, nil
+}
+
 func (s *Service) StudentDetail(rawStudentID string) (StudentDetail, bool, error) {
 	const recentItemLimit = 4
 
@@ -972,6 +1460,7 @@ func (s *Service) Classes() ([]ClassItem, error) {
 	query := `
 SELECT
   c.id,
+  c.course_id,
   c.name,
   COALESCE(co.name, '') AS course_name,
   c.teacher_id,
@@ -980,7 +1469,11 @@ SELECT
   COUNT(cs.id) AS student_count,
   c.capacity,
   c.weekly_schedule,
+  COALESCE(DATE_FORMAT(c.start_date, '%Y-%m-%d'), '') AS start_date,
+  COALESCE(DATE_FORMAT(c.end_date, '%Y-%m-%d'), '') AS end_date,
   c.status
+  ,
+  COALESCE(c.remark, '') AS remark
 FROM classes AS c
 LEFT JOIN courses AS co
   ON co.id = c.course_id
@@ -990,6 +1483,7 @@ LEFT JOIN class_students AS cs
   ON cs.class_id = c.id AND cs.status = ?
 GROUP BY
   c.id,
+  c.course_id,
   c.name,
   co.name,
   c.teacher_id,
@@ -997,7 +1491,11 @@ GROUP BY
   c.campus,
   c.capacity,
   c.weekly_schedule,
+  c.start_date,
+  c.end_date,
   c.status
+  ,
+  c.remark
 ORDER BY c.id ASC
 `
 
@@ -1018,6 +1516,7 @@ func (s *Service) Class(rawID string) (ClassItem, bool, error) {
 	query := `
 SELECT
   c.id,
+  c.course_id,
   c.name,
   COALESCE(co.name, '') AS course_name,
   c.teacher_id,
@@ -1026,7 +1525,11 @@ SELECT
   COUNT(cs.id) AS student_count,
   c.capacity,
   c.weekly_schedule,
+  COALESCE(DATE_FORMAT(c.start_date, '%Y-%m-%d'), '') AS start_date,
+  COALESCE(DATE_FORMAT(c.end_date, '%Y-%m-%d'), '') AS end_date,
   c.status
+  ,
+  COALESCE(c.remark, '') AS remark
 FROM classes AS c
 LEFT JOIN courses AS co
   ON co.id = c.course_id
@@ -1037,6 +1540,7 @@ LEFT JOIN class_students AS cs
 WHERE c.id = ?
 GROUP BY
   c.id,
+  c.course_id,
   c.name,
   co.name,
   c.teacher_id,
@@ -1044,7 +1548,11 @@ GROUP BY
   c.campus,
   c.capacity,
   c.weekly_schedule,
+  c.start_date,
+  c.end_date,
   c.status
+  ,
+  c.remark
 LIMIT 1
 `
 
@@ -1059,6 +1567,88 @@ LIMIT 1
 	}
 
 	return item, true, nil
+}
+
+func (s *Service) CreateClass(input ClassPayload) (ClassItem, error) {
+	if s.db == nil {
+		return ClassItem{}, nil
+	}
+
+	startDate, endDate, parseErr := parseClassDates(input.StartDate, input.EndDate)
+	if parseErr != nil {
+		return ClassItem{}, parseErr
+	}
+
+	now := time.Now()
+	classItem := edumodel.Class{
+		Name:           input.Name,
+		CourseID:       input.CourseID,
+		TeacherID:      input.TeacherID,
+		Campus:         input.Campus,
+		Capacity:       input.Capacity,
+		WeeklySchedule: input.WeeklySchedule,
+		StartDate:      startDate,
+		EndDate:        endDate,
+		Status:         input.Status,
+		Remark:         input.Remark,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	createErr := s.db.Create(&classItem).Error
+	if createErr != nil {
+		return ClassItem{}, createErr
+	}
+
+	createdItem, found, classErr := s.Class(fmt.Sprintf("%d", classItem.ID))
+	if classErr != nil {
+		return ClassItem{}, classErr
+	}
+	if !found {
+		return ClassItem{}, nil
+	}
+
+	return createdItem, nil
+}
+
+func (s *Service) UpdateClass(rawID string, input ClassPayload) (ClassItem, bool, error) {
+	if s.db == nil {
+		return ClassItem{}, false, nil
+	}
+
+	startDate, endDate, parseErr := parseClassDates(input.StartDate, input.EndDate)
+	if parseErr != nil {
+		return ClassItem{}, false, parseErr
+	}
+
+	updateResult := s.db.Model(&edumodel.Class{}).
+		Where("id = ?", rawID).
+		Updates(map[string]any{
+			"name":            input.Name,
+			"course_id":       input.CourseID,
+			"teacher_id":      input.TeacherID,
+			"campus":          input.Campus,
+			"capacity":        input.Capacity,
+			"weekly_schedule": input.WeeklySchedule,
+			"start_date":      startDate,
+			"end_date":        endDate,
+			"status":          input.Status,
+			"remark":          input.Remark,
+			"updated_at":      time.Now(),
+		})
+	if updateResult.Error != nil {
+		return ClassItem{}, false, updateResult.Error
+	}
+	if updateResult.RowsAffected == 0 {
+		return ClassItem{}, false, nil
+	}
+
+	updatedItem, found, classErr := s.Class(rawID)
+	if classErr != nil {
+		return ClassItem{}, false, classErr
+	}
+
+	return updatedItem, found, nil
 }
 
 func (s *Service) ClassStudents(rawClassID string) ([]StudentItem, error) {
@@ -3093,6 +3683,7 @@ func classItemsFromDemo(source []demo.Class) []ClassItem {
 	for _, item := range source {
 		items = append(items, ClassItem{
 			ID:             uint64(item.ID),
+			CourseID:       uint64(item.CourseID),
 			Name:           item.Name,
 			CourseName:     item.CourseName,
 			TeacherID:      uint64(item.TeacherID),
@@ -3101,7 +3692,10 @@ func classItemsFromDemo(source []demo.Class) []ClassItem {
 			StudentCount:   item.StudentCount,
 			Capacity:       item.Capacity,
 			WeeklySchedule: item.WeeklySchedule,
+			StartDate:      item.StartDate,
+			EndDate:        item.EndDate,
 			Status:         item.Status,
+			Remark:         item.Remark,
 		})
 	}
 	return items
@@ -3114,6 +3708,7 @@ func classItemFromDemo(rawID string) (ClassItem, bool, error) {
 	}
 	return ClassItem{
 		ID:             uint64(item.ID),
+		CourseID:       uint64(item.CourseID),
 		Name:           item.Name,
 		CourseName:     item.CourseName,
 		TeacherID:      uint64(item.TeacherID),
@@ -3122,7 +3717,10 @@ func classItemFromDemo(rawID string) (ClassItem, bool, error) {
 		StudentCount:   item.StudentCount,
 		Capacity:       item.Capacity,
 		WeeklySchedule: item.WeeklySchedule,
+		StartDate:      item.StartDate,
+		EndDate:        item.EndDate,
 		Status:         item.Status,
+		Remark:         item.Remark,
 	}, true, nil
 }
 
@@ -3477,6 +4075,35 @@ func formatDateTime(value *time.Time) string {
 		return ""
 	}
 	return value.Format(dateTimeLayout)
+}
+
+func parseOptionalDate(raw string) (*time.Time, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	parsedValue, parseErr := time.ParseInLocation(dateLayout, trimmed, time.Local)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+
+	normalizedValue := startOfDay(parsedValue)
+	return &normalizedValue, nil
+}
+
+func parseClassDates(startDate string, endDate string) (*time.Time, *time.Time, error) {
+	parsedStartDate, startParseErr := parseOptionalDate(startDate)
+	if startParseErr != nil {
+		return nil, nil, startParseErr
+	}
+
+	parsedEndDate, endParseErr := parseOptionalDate(endDate)
+	if endParseErr != nil {
+		return nil, nil, endParseErr
+	}
+
+	return parsedStartDate, parsedEndDate, nil
 }
 
 func datePointer(value time.Time) *time.Time {
