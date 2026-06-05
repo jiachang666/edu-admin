@@ -5,6 +5,7 @@ import LoginView from "../views/auth/LoginView.vue";
 import DashboardView from "../views/dashboard/DashboardView.vue";
 import TeacherListView from "../views/teachers/TeacherListView.vue";
 import StudentListView from "../views/students/StudentListView.vue";
+import StudentDetailView from "../views/students/StudentDetailView.vue";
 import CourseListView from "../views/courses/CourseListView.vue";
 import ClassListView from "../views/classes/ClassListView.vue";
 import ClassDetailView from "../views/classes/ClassDetailView.vue";
@@ -59,6 +60,16 @@ const router = createRouter({
             title: "学员管理",
             eyebrow: "Student Ledger",
             description: "把学员、家长、班级归属和续费状态收拢到同一份台账里。",
+          },
+        },
+        {
+          path: "students/:id",
+          name: "student-detail",
+          component: StudentDetailView,
+          meta: {
+            title: "学员详情",
+            eyebrow: "Student Hub",
+            description: "把学员、家长、班级、上课和课后跟进收进同一页，方便老师和教务快速接手。",
           },
         },
         {

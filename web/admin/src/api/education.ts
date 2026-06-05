@@ -62,6 +62,52 @@ export type Student = {
   status: string;
 };
 
+export type StudentProfile = {
+  id: number;
+  name: string;
+  gender: string;
+  schoolName: string;
+  grade: string;
+  parentName: string;
+  parentMobile: string;
+  campus: string;
+  remainingHours: number;
+  status: string;
+  remark: string;
+};
+
+export type StudentGuardian = {
+  id: number;
+  name: string;
+  relation: string;
+  mobile: string;
+  isPrimary: boolean;
+};
+
+export type StudentAttendanceRecord = {
+  scheduleId: number;
+  classId: number;
+  className: string;
+  courseName: string;
+  teacherName: string;
+  campus: string;
+  classroom: string;
+  lessonDate: string;
+  lessonTime: string;
+  status: string;
+  remark: string;
+};
+
+export type StudentDetail = {
+  student: StudentProfile;
+  guardians: StudentGuardian[];
+  classes: SchoolClass[];
+  recentSchedules: Schedule[];
+  recentAttendance: StudentAttendanceRecord[];
+  recentHomeworks: Homework[];
+  recentFeedbacks: Feedback[];
+};
+
 export type SchoolClass = {
   id: number;
   name: string;
@@ -228,6 +274,10 @@ export function updateCourse(id: number, payload: CoursePayload) {
 
 export function fetchStudentList() {
   return unwrap<PagedResult<Student>>(http.get("/students"));
+}
+
+export function fetchStudentDetail(studentId: number) {
+  return unwrap<StudentDetail>(http.get(`/students/${studentId}`));
 }
 
 export function fetchClassList() {
