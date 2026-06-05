@@ -5,6 +5,7 @@ import {
   Checked,
   CollectionTag,
   House,
+  Memo,
   Notebook,
   Reading,
   School,
@@ -59,6 +60,12 @@ const menus = [
     label: "签到",
     hint: "点名与历史回看",
     icon: Checked,
+  },
+  {
+    path: "/homeworks",
+    label: "作业反馈",
+    hint: "课后作业与班级反馈",
+    icon: Memo,
   },
   {
     path: "/notices",

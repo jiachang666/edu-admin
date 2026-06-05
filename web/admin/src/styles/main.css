@@ -779,6 +779,34 @@ a {
   line-height: 1.7;
 }
 
+.homework-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.homework-editor-card {
+  padding: 0;
+  box-shadow: none;
+}
+
+.homework-editor-card::before {
+  display: none;
+}
+
+.homework-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.table-link-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
 .login-page {
   display: grid;
   place-items: center;
@@ -1150,6 +1178,10 @@ a {
   }
 
   .panel-grid--dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .homework-editor-grid {
     grid-template-columns: 1fr;
   }
 

@@ -41,6 +41,13 @@ async function openAttendance(scheduleId: number) {
   });
 }
 
+async function openHomework(scheduleId: number) {
+  await router.push({
+    path: "/homeworks",
+    query: { scheduleId: String(scheduleId) },
+  });
+}
+
 onMounted(() => {
   void loadSchedules();
 });
@@ -110,9 +117,14 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="操作" width="120" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openAttendance(row.id)">
-                {{ row.attendanceStatus === "待签到" ? "去签到" : "看记录" }}
-              </el-button>
+              <div class="table-link-group">
+                <el-button link type="primary" @click="openAttendance(row.id)">
+                  {{ row.attendanceStatus === "待签到" ? "去签到" : "看记录" }}
+                </el-button>
+                <el-button link type="primary" @click="openHomework(row.id)">
+                  作业反馈
+                </el-button>
+              </div>
             </template>
           </el-table-column>
         </el-table>

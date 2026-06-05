@@ -9,6 +9,7 @@ import CourseListView from "../views/courses/CourseListView.vue";
 import ClassListView from "../views/classes/ClassListView.vue";
 import ScheduleListView from "../views/schedules/ScheduleListView.vue";
 import AttendanceView from "../views/attendance/AttendanceView.vue";
+import HomeworkView from "../views/homeworks/HomeworkView.vue";
 import NoticeListView from "../views/notices/NoticeListView.vue";
 
 const router = createRouter({
@@ -97,6 +98,16 @@ const router = createRouter({
             title: "签到管理",
             eyebrow: "Attendance Desk",
             description: "把待签到班级、点名结果和历史记录收进一个顺手的签到工作台。",
+          },
+        },
+        {
+          path: "homeworks",
+          name: "homeworks",
+          component: HomeworkView,
+          meta: {
+            title: "作业与反馈",
+            eyebrow: "Homework Studio",
+            description: "围绕每次上课安排快速布置作业，并补上班级级别的课后反馈。",
           },
         },
         {

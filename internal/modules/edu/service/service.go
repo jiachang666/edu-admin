@@ -161,6 +161,48 @@ type AttendanceSavePayload struct {
 	Items []AttendanceSaveItem `json:"items"`
 }
 
+type HomeworkItem struct {
+	ID             uint64 `json:"id"`
+	ScheduleID     uint64 `json:"scheduleId"`
+	ClassID        uint64 `json:"classId"`
+	ClassName      string `json:"className"`
+	CourseName     string `json:"courseName"`
+	TeacherName    string `json:"teacherName"`
+	LessonDate     string `json:"lessonDate"`
+	Title          string `json:"title"`
+	Content        string `json:"content"`
+	SubmissionNote string `json:"submissionNote"`
+	Status         string `json:"status"`
+}
+
+type HomeworkPayload struct {
+	Title          string `json:"title"`
+	Content        string `json:"content"`
+	SubmissionNote string `json:"submissionNote"`
+	Status         string `json:"status"`
+}
+
+type FeedbackItem struct {
+	ID             uint64 `json:"id"`
+	ScheduleID     uint64 `json:"scheduleId"`
+	ClassID        uint64 `json:"classId"`
+	ClassName      string `json:"className"`
+	CourseName     string `json:"courseName"`
+	TeacherName    string `json:"teacherName"`
+	LessonDate     string `json:"lessonDate"`
+	Summary        string `json:"summary"`
+	LearningStatus string `json:"learningStatus"`
+	NextSuggestion string `json:"nextSuggestion"`
+	ParentNotice   string `json:"parentNotice"`
+}
+
+type FeedbackPayload struct {
+	Summary        string `json:"summary"`
+	LearningStatus string `json:"learningStatus"`
+	NextSuggestion string `json:"nextSuggestion"`
+	ParentNotice   string `json:"parentNotice"`
+}
+
 func New(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
@@ -179,6 +221,8 @@ func (s *Service) Bootstrap(autoSeed bool) error {
 		&edumodel.ClassStudent{},
 		&edumodel.ClassSchedule{},
 		&edumodel.AttendanceRecord{},
+		&edumodel.Homework{},
+		&edumodel.ClassFeedback{},
 		&edumodel.Notice{},
 	)
 	if migrateErr != nil {
@@ -1070,6 +1114,526 @@ ORDER BY st.id ASC
 	return items, nil
 }
 
+func (s *Service) Homeworks() ([]HomeworkItem, error) {
+	if s.db == nil {
+		return homeworkItemsFromDemo(demo.Homeworks()), nil
+	}
+
+	schedules, scheduleErr := s.Schedules()
+	if scheduleErr != nil {
+		return nil, scheduleErr
+	}
+
+	query := `
+SELECT
+  h.id,
+  h.schedule_id,
+  h.class_id,
+  COALESCE(c.name, '') AS class_name,
+  COALESCE(co.name, '') AS course_name,
+  COALESCE(t.name, '') AS teacher_name,
+  s.schedule_date,
+  h.title,
+  h.content,
+  COALESCE(h.submission_note, '') AS submission_note,
+  h.status
+FROM homeworks AS h
+LEFT JOIN class_schedules AS s
+  ON s.id = h.schedule_id
+LEFT JOIN classes AS c
+  ON c.id = h.class_id
+LEFT JOIN courses AS co
+  ON co.id = s.course_id
+LEFT JOIN teachers AS t
+  ON t.id = s.teacher_id
+ORDER BY s.schedule_date DESC, h.id DESC
+`
+
+	type homeworkRow struct {
+		ID             uint64    `gorm:"column:id"`
+		ScheduleID     uint64    `gorm:"column:schedule_id"`
+		ClassID        uint64    `gorm:"column:class_id"`
+		ClassName      string    `gorm:"column:class_name"`
+		CourseName     string    `gorm:"column:course_name"`
+		TeacherName    string    `gorm:"column:teacher_name"`
+		ScheduleDate   time.Time `gorm:"column:schedule_date"`
+		Title          string    `gorm:"column:title"`
+		Content        string    `gorm:"column:content"`
+		SubmissionNote string    `gorm:"column:submission_note"`
+		Status         string    `gorm:"column:status"`
+	}
+
+	var rows []homeworkRow
+	listErr := s.db.Raw(query).Scan(&rows).Error
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	itemMap := make(map[uint64]HomeworkItem, len(rows))
+	for _, row := range rows {
+		itemMap[row.ScheduleID] = HomeworkItem{
+			ID:             row.ID,
+			ScheduleID:     row.ScheduleID,
+			ClassID:        row.ClassID,
+			ClassName:      row.ClassName,
+			CourseName:     row.CourseName,
+			TeacherName:    row.TeacherName,
+			LessonDate:     row.ScheduleDate.Format(dateLayout),
+			Title:          row.Title,
+			Content:        row.Content,
+			SubmissionNote: row.SubmissionNote,
+			Status:         row.Status,
+		}
+	}
+
+	items := make([]HomeworkItem, 0, len(schedules))
+	for _, scheduleItem := range schedules {
+		if item, found := itemMap[scheduleItem.ID]; found {
+			items = append(items, item)
+			continue
+		}
+
+		fallbackItem, fallbackFound := homeworkItemFromDemoWithSchedule(scheduleItem)
+		if fallbackFound {
+			items = append(items, fallbackItem)
+		}
+	}
+
+	return items, nil
+}
+
+func (s *Service) Homework(rawScheduleID string) (HomeworkItem, bool, error) {
+	if s.db == nil {
+		return homeworkItemFromDemo(rawScheduleID)
+	}
+
+	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
+	if scheduleErr != nil {
+		return HomeworkItem{}, false, scheduleErr
+	}
+	if !found {
+		return HomeworkItem{}, false, nil
+	}
+
+	query := `
+SELECT
+  h.id,
+  h.schedule_id,
+  h.class_id,
+  COALESCE(c.name, '') AS class_name,
+  COALESCE(co.name, '') AS course_name,
+  COALESCE(t.name, '') AS teacher_name,
+  s.schedule_date,
+  h.title,
+  h.content,
+  COALESCE(h.submission_note, '') AS submission_note,
+  h.status
+FROM homeworks AS h
+LEFT JOIN class_schedules AS s
+  ON s.id = h.schedule_id
+LEFT JOIN classes AS c
+  ON c.id = h.class_id
+LEFT JOIN courses AS co
+  ON co.id = s.course_id
+LEFT JOIN teachers AS t
+  ON t.id = s.teacher_id
+WHERE h.schedule_id = ?
+LIMIT 1
+`
+
+	type homeworkRow struct {
+		ID             uint64    `gorm:"column:id"`
+		ScheduleID     uint64    `gorm:"column:schedule_id"`
+		ClassID        uint64    `gorm:"column:class_id"`
+		ClassName      string    `gorm:"column:class_name"`
+		CourseName     string    `gorm:"column:course_name"`
+		TeacherName    string    `gorm:"column:teacher_name"`
+		ScheduleDate   time.Time `gorm:"column:schedule_date"`
+		Title          string    `gorm:"column:title"`
+		Content        string    `gorm:"column:content"`
+		SubmissionNote string    `gorm:"column:submission_note"`
+		Status         string    `gorm:"column:status"`
+	}
+
+	var row homeworkRow
+	findErr := s.db.Raw(query, rawScheduleID).Scan(&row).Error
+	if findErr != nil {
+		return HomeworkItem{}, false, findErr
+	}
+
+	if row.ScheduleID == 0 {
+		fallbackItem, fallbackFound := homeworkItemFromDemoWithSchedule(scheduleItem)
+		if !fallbackFound {
+			return HomeworkItem{}, false, nil
+		}
+
+		return fallbackItem, true, nil
+	}
+
+	return HomeworkItem{
+		ID:             row.ID,
+		ScheduleID:     row.ScheduleID,
+		ClassID:        row.ClassID,
+		ClassName:      row.ClassName,
+		CourseName:     row.CourseName,
+		TeacherName:    row.TeacherName,
+		LessonDate:     row.ScheduleDate.Format(dateLayout),
+		Title:          row.Title,
+		Content:        row.Content,
+		SubmissionNote: row.SubmissionNote,
+		Status:         row.Status,
+	}, true, nil
+}
+
+func (s *Service) SaveHomework(rawScheduleID string, payload HomeworkPayload) (HomeworkItem, bool, error) {
+	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
+	if scheduleErr != nil {
+		return HomeworkItem{}, false, scheduleErr
+	}
+	if !found {
+		return HomeworkItem{}, false, nil
+	}
+
+	normalizedStatus := normalizeHomeworkStatus(payload.Status)
+	if normalizedStatus == "" {
+		normalizedStatus = "published"
+	}
+
+	trimmedTitle := strings.TrimSpace(payload.Title)
+	if trimmedTitle == "" {
+		trimmedTitle = fmt.Sprintf("%s课后作业", scheduleItem.CourseName)
+	}
+
+	if s.db == nil {
+		savedItem := HomeworkItem{
+			ID:             uint64(scheduleItem.ID),
+			ScheduleID:     scheduleItem.ID,
+			ClassID:        scheduleItem.ClassID,
+			ClassName:      scheduleItem.ClassName,
+			CourseName:     scheduleItem.CourseName,
+			TeacherName:    scheduleItem.TeacherName,
+			LessonDate:     scheduleItem.LessonDate,
+			Title:          trimmedTitle,
+			Content:        strings.TrimSpace(payload.Content),
+			SubmissionNote: strings.TrimSpace(payload.SubmissionNote),
+			Status:         normalizedStatus,
+		}
+
+		demoSaved := demo.SaveHomework(demo.Homework{
+			ID:             int(savedItem.ID),
+			ScheduleID:     int(savedItem.ScheduleID),
+			ClassID:        int(savedItem.ClassID),
+			ClassName:      savedItem.ClassName,
+			CourseName:     savedItem.CourseName,
+			TeacherName:    savedItem.TeacherName,
+			LessonDate:     savedItem.LessonDate,
+			Title:          savedItem.Title,
+			Content:        savedItem.Content,
+			SubmissionNote: savedItem.SubmissionNote,
+			Status:         savedItem.Status,
+		})
+		if !demoSaved {
+			return HomeworkItem{}, false, nil
+		}
+
+		return savedItem, true, nil
+	}
+
+	scheduleID, parseErr := strconv.ParseUint(rawScheduleID, 10, 64)
+	if parseErr != nil {
+		return HomeworkItem{}, false, nil
+	}
+
+	now := time.Now()
+	record := edumodel.Homework{
+		ScheduleID:      scheduleID,
+		ClassID:         scheduleItem.ClassID,
+		Title:           trimmedTitle,
+		Content:         strings.TrimSpace(payload.Content),
+		SubmissionNote:  strings.TrimSpace(payload.SubmissionNote),
+		CreatedByUserID: 1,
+		Status:          normalizedStatus,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+
+	saveErr := s.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "schedule_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"title",
+			"content",
+			"submission_note",
+			"status",
+			"updated_at",
+		}),
+	}).Create(&record).Error
+	if saveErr != nil {
+		return HomeworkItem{}, false, saveErr
+	}
+
+	savedItem, detailFound, detailErr := s.Homework(rawScheduleID)
+	if detailErr != nil {
+		return HomeworkItem{}, false, detailErr
+	}
+
+	return savedItem, detailFound, nil
+}
+
+func (s *Service) Feedbacks() ([]FeedbackItem, error) {
+	if s.db == nil {
+		return feedbackItemsFromDemo(demo.Feedbacks()), nil
+	}
+
+	schedules, scheduleErr := s.Schedules()
+	if scheduleErr != nil {
+		return nil, scheduleErr
+	}
+
+	query := `
+SELECT
+  f.id,
+  f.schedule_id,
+  f.class_id,
+  COALESCE(c.name, '') AS class_name,
+  COALESCE(co.name, '') AS course_name,
+  COALESCE(t.name, '') AS teacher_name,
+  s.schedule_date,
+  COALESCE(f.summary, '') AS summary,
+  COALESCE(f.learning_status, '') AS learning_status,
+  COALESCE(f.next_suggestion, '') AS next_suggestion,
+  COALESCE(f.parent_notice, '') AS parent_notice
+FROM class_feedbacks AS f
+LEFT JOIN class_schedules AS s
+  ON s.id = f.schedule_id
+LEFT JOIN classes AS c
+  ON c.id = f.class_id
+LEFT JOIN courses AS co
+  ON co.id = s.course_id
+LEFT JOIN teachers AS t
+  ON t.id = s.teacher_id
+ORDER BY s.schedule_date DESC, f.id DESC
+`
+
+	type feedbackRow struct {
+		ID             uint64    `gorm:"column:id"`
+		ScheduleID     uint64    `gorm:"column:schedule_id"`
+		ClassID        uint64    `gorm:"column:class_id"`
+		ClassName      string    `gorm:"column:class_name"`
+		CourseName     string    `gorm:"column:course_name"`
+		TeacherName    string    `gorm:"column:teacher_name"`
+		ScheduleDate   time.Time `gorm:"column:schedule_date"`
+		Summary        string    `gorm:"column:summary"`
+		LearningStatus string    `gorm:"column:learning_status"`
+		NextSuggestion string    `gorm:"column:next_suggestion"`
+		ParentNotice   string    `gorm:"column:parent_notice"`
+	}
+
+	var rows []feedbackRow
+	listErr := s.db.Raw(query).Scan(&rows).Error
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	itemMap := make(map[uint64]FeedbackItem, len(rows))
+	for _, row := range rows {
+		itemMap[row.ScheduleID] = FeedbackItem{
+			ID:             row.ID,
+			ScheduleID:     row.ScheduleID,
+			ClassID:        row.ClassID,
+			ClassName:      row.ClassName,
+			CourseName:     row.CourseName,
+			TeacherName:    row.TeacherName,
+			LessonDate:     row.ScheduleDate.Format(dateLayout),
+			Summary:        row.Summary,
+			LearningStatus: row.LearningStatus,
+			NextSuggestion: row.NextSuggestion,
+			ParentNotice:   row.ParentNotice,
+		}
+	}
+
+	items := make([]FeedbackItem, 0, len(schedules))
+	for _, scheduleItem := range schedules {
+		if item, found := itemMap[scheduleItem.ID]; found {
+			items = append(items, item)
+			continue
+		}
+
+		fallbackItem, fallbackFound := feedbackItemFromDemoWithSchedule(scheduleItem)
+		if fallbackFound {
+			items = append(items, fallbackItem)
+		}
+	}
+
+	return items, nil
+}
+
+func (s *Service) Feedback(rawScheduleID string) (FeedbackItem, bool, error) {
+	if s.db == nil {
+		return feedbackItemFromDemo(rawScheduleID)
+	}
+
+	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
+	if scheduleErr != nil {
+		return FeedbackItem{}, false, scheduleErr
+	}
+	if !found {
+		return FeedbackItem{}, false, nil
+	}
+
+	query := `
+SELECT
+  f.id,
+  f.schedule_id,
+  f.class_id,
+  COALESCE(c.name, '') AS class_name,
+  COALESCE(co.name, '') AS course_name,
+  COALESCE(t.name, '') AS teacher_name,
+  s.schedule_date,
+  COALESCE(f.summary, '') AS summary,
+  COALESCE(f.learning_status, '') AS learning_status,
+  COALESCE(f.next_suggestion, '') AS next_suggestion,
+  COALESCE(f.parent_notice, '') AS parent_notice
+FROM class_feedbacks AS f
+LEFT JOIN class_schedules AS s
+  ON s.id = f.schedule_id
+LEFT JOIN classes AS c
+  ON c.id = f.class_id
+LEFT JOIN courses AS co
+  ON co.id = s.course_id
+LEFT JOIN teachers AS t
+  ON t.id = s.teacher_id
+WHERE f.schedule_id = ?
+LIMIT 1
+`
+
+	type feedbackRow struct {
+		ID             uint64    `gorm:"column:id"`
+		ScheduleID     uint64    `gorm:"column:schedule_id"`
+		ClassID        uint64    `gorm:"column:class_id"`
+		ClassName      string    `gorm:"column:class_name"`
+		CourseName     string    `gorm:"column:course_name"`
+		TeacherName    string    `gorm:"column:teacher_name"`
+		ScheduleDate   time.Time `gorm:"column:schedule_date"`
+		Summary        string    `gorm:"column:summary"`
+		LearningStatus string    `gorm:"column:learning_status"`
+		NextSuggestion string    `gorm:"column:next_suggestion"`
+		ParentNotice   string    `gorm:"column:parent_notice"`
+	}
+
+	var row feedbackRow
+	findErr := s.db.Raw(query, rawScheduleID).Scan(&row).Error
+	if findErr != nil {
+		return FeedbackItem{}, false, findErr
+	}
+
+	if row.ScheduleID == 0 {
+		fallbackItem, fallbackFound := feedbackItemFromDemoWithSchedule(scheduleItem)
+		if !fallbackFound {
+			return FeedbackItem{}, false, nil
+		}
+
+		return fallbackItem, true, nil
+	}
+
+	return FeedbackItem{
+		ID:             row.ID,
+		ScheduleID:     row.ScheduleID,
+		ClassID:        row.ClassID,
+		ClassName:      row.ClassName,
+		CourseName:     row.CourseName,
+		TeacherName:    row.TeacherName,
+		LessonDate:     row.ScheduleDate.Format(dateLayout),
+		Summary:        row.Summary,
+		LearningStatus: row.LearningStatus,
+		NextSuggestion: row.NextSuggestion,
+		ParentNotice:   row.ParentNotice,
+	}, true, nil
+}
+
+func (s *Service) SaveFeedback(rawScheduleID string, payload FeedbackPayload) (FeedbackItem, bool, error) {
+	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
+	if scheduleErr != nil {
+		return FeedbackItem{}, false, scheduleErr
+	}
+	if !found {
+		return FeedbackItem{}, false, nil
+	}
+
+	if s.db == nil {
+		savedItem := FeedbackItem{
+			ID:             uint64(scheduleItem.ID),
+			ScheduleID:     scheduleItem.ID,
+			ClassID:        scheduleItem.ClassID,
+			ClassName:      scheduleItem.ClassName,
+			CourseName:     scheduleItem.CourseName,
+			TeacherName:    scheduleItem.TeacherName,
+			LessonDate:     scheduleItem.LessonDate,
+			Summary:        strings.TrimSpace(payload.Summary),
+			LearningStatus: strings.TrimSpace(payload.LearningStatus),
+			NextSuggestion: strings.TrimSpace(payload.NextSuggestion),
+			ParentNotice:   strings.TrimSpace(payload.ParentNotice),
+		}
+
+		demoSaved := demo.SaveFeedback(demo.Feedback{
+			ID:             int(savedItem.ID),
+			ScheduleID:     int(savedItem.ScheduleID),
+			ClassID:        int(savedItem.ClassID),
+			ClassName:      savedItem.ClassName,
+			CourseName:     savedItem.CourseName,
+			TeacherName:    savedItem.TeacherName,
+			LessonDate:     savedItem.LessonDate,
+			Summary:        savedItem.Summary,
+			LearningStatus: savedItem.LearningStatus,
+			NextSuggestion: savedItem.NextSuggestion,
+			ParentNotice:   savedItem.ParentNotice,
+		})
+		if !demoSaved {
+			return FeedbackItem{}, false, nil
+		}
+
+		return savedItem, true, nil
+	}
+
+	scheduleID, parseErr := strconv.ParseUint(rawScheduleID, 10, 64)
+	if parseErr != nil {
+		return FeedbackItem{}, false, nil
+	}
+
+	now := time.Now()
+	record := edumodel.ClassFeedback{
+		ScheduleID:      scheduleID,
+		ClassID:         scheduleItem.ClassID,
+		Summary:         strings.TrimSpace(payload.Summary),
+		LearningStatus:  strings.TrimSpace(payload.LearningStatus),
+		NextSuggestion:  strings.TrimSpace(payload.NextSuggestion),
+		ParentNotice:    strings.TrimSpace(payload.ParentNotice),
+		CreatedByUserID: 1,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+
+	saveErr := s.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "schedule_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"summary",
+			"learning_status",
+			"next_suggestion",
+			"parent_notice",
+			"updated_at",
+		}),
+	}).Create(&record).Error
+	if saveErr != nil {
+		return FeedbackItem{}, false, saveErr
+	}
+
+	savedItem, detailFound, detailErr := s.Feedback(rawScheduleID)
+	if detailErr != nil {
+		return FeedbackItem{}, false, detailErr
+	}
+
+	return savedItem, detailFound, nil
+}
+
 func (s *Service) Notices() ([]NoticeItem, error) {
 	if s.db == nil {
 		return noticeItemsFromDemo(demo.Notices()), nil
@@ -1272,6 +1836,26 @@ func (s *Service) seedIfEmpty() error {
 		attendanceRecordErr := tx.Create(&attendanceRecords).Error
 		if attendanceRecordErr != nil {
 			return attendanceRecordErr
+		}
+
+		homeworks := []edumodel.Homework{
+			{ID: 1, ScheduleID: 1, ClassID: 1, Title: "思维训练第 4 讲课后练习", Content: "完成练习册第 12-15 页，并整理两道易错题的解题步骤。", SubmissionNote: "下节课前带回纸质作业，家长协助检查书写完整度。", CreatedByUserID: 1, Status: "published", CreatedAt: now, UpdatedAt: now},
+			{ID: 2, ScheduleID: 2, ClassID: 2, Title: "英语阅读分级复述任务", Content: "完成本周阅读卡第 3 篇并录一段 60 秒英文复述。", SubmissionNote: "家长可拍视频发到班级群，老师下次课统一点评。", CreatedByUserID: 1, Status: "published", CreatedAt: now, UpdatedAt: now},
+		}
+
+		homeworkErr := tx.Create(&homeworks).Error
+		if homeworkErr != nil {
+			return homeworkErr
+		}
+
+		classFeedbacks := []edumodel.ClassFeedback{
+			{ID: 1, ScheduleID: 1, ClassID: 1, Summary: "课堂整体专注度不错，能跟上本节推理题节奏。", LearningStatus: "大部分同学能独立完成基础题，个别同学在多步骤表达上还需要提醒。", NextSuggestion: "下次课前建议再复习一次本周错题，带着自己的思路来讲解。", ParentNotice: "请家长关注孩子列式步骤是否完整，不只看最终答案。", CreatedByUserID: 1, CreatedAt: now, UpdatedAt: now},
+			{ID: 2, ScheduleID: 2, ClassID: 2, Summary: "本节重点放在阅读理解和复述表达，课堂互动稳定。", LearningStatus: "学生对关键词抓取已经有进步，但整句复述还需要更多练习。", NextSuggestion: "课后多做跟读和复述训练，下节课继续检查语音语调。", ParentNotice: "如果孩子本周无法按时提交复述视频，请提前在群里说明。", CreatedByUserID: 1, CreatedAt: now, UpdatedAt: now},
+		}
+
+		classFeedbackErr := tx.Create(&classFeedbacks).Error
+		if classFeedbackErr != nil {
+			return classFeedbackErr
 		}
 
 		publishAtOne := now.Add(-6 * time.Hour)
@@ -1524,6 +2108,137 @@ func attendanceItemsFromDemo(source []demo.AttendanceItem) []AttendanceItem {
 	return items
 }
 
+func homeworkItemsFromDemo(source []demo.Homework) []HomeworkItem {
+	items := make([]HomeworkItem, 0, len(source))
+	for _, item := range source {
+		items = append(items, HomeworkItem{
+			ID:             uint64(item.ID),
+			ScheduleID:     uint64(item.ScheduleID),
+			ClassID:        uint64(item.ClassID),
+			ClassName:      item.ClassName,
+			CourseName:     item.CourseName,
+			TeacherName:    item.TeacherName,
+			LessonDate:     item.LessonDate,
+			Title:          item.Title,
+			Content:        item.Content,
+			SubmissionNote: item.SubmissionNote,
+			Status:         item.Status,
+		})
+	}
+
+	return items
+}
+
+func homeworkItemFromDemo(rawScheduleID string) (HomeworkItem, bool, error) {
+	item, found := demo.HomeworkBySchedule(rawScheduleID)
+	if !found {
+		return HomeworkItem{}, false, nil
+	}
+
+	return HomeworkItem{
+		ID:             uint64(item.ID),
+		ScheduleID:     uint64(item.ScheduleID),
+		ClassID:        uint64(item.ClassID),
+		ClassName:      item.ClassName,
+		CourseName:     item.CourseName,
+		TeacherName:    item.TeacherName,
+		LessonDate:     item.LessonDate,
+		Title:          item.Title,
+		Content:        item.Content,
+		SubmissionNote: item.SubmissionNote,
+		Status:         item.Status,
+	}, true, nil
+}
+
+func homeworkItemFromDemoWithSchedule(scheduleItem ScheduleItem) (HomeworkItem, bool) {
+	item, found := demo.HomeworkBySchedule(fmt.Sprintf("%d", scheduleItem.ID))
+	if !found {
+		return HomeworkItem{}, false
+	}
+
+	normalizedStatus := normalizeHomeworkStatus(item.Status)
+	if normalizedStatus == "" {
+		normalizedStatus = "published"
+	}
+
+	return HomeworkItem{
+		ID:             uint64(item.ID),
+		ScheduleID:     scheduleItem.ID,
+		ClassID:        scheduleItem.ClassID,
+		ClassName:      scheduleItem.ClassName,
+		CourseName:     scheduleItem.CourseName,
+		TeacherName:    scheduleItem.TeacherName,
+		LessonDate:     scheduleItem.LessonDate,
+		Title:          item.Title,
+		Content:        item.Content,
+		SubmissionNote: item.SubmissionNote,
+		Status:         normalizedStatus,
+	}, true
+}
+
+func feedbackItemsFromDemo(source []demo.Feedback) []FeedbackItem {
+	items := make([]FeedbackItem, 0, len(source))
+	for _, item := range source {
+		items = append(items, FeedbackItem{
+			ID:             uint64(item.ID),
+			ScheduleID:     uint64(item.ScheduleID),
+			ClassID:        uint64(item.ClassID),
+			ClassName:      item.ClassName,
+			CourseName:     item.CourseName,
+			TeacherName:    item.TeacherName,
+			LessonDate:     item.LessonDate,
+			Summary:        item.Summary,
+			LearningStatus: item.LearningStatus,
+			NextSuggestion: item.NextSuggestion,
+			ParentNotice:   item.ParentNotice,
+		})
+	}
+
+	return items
+}
+
+func feedbackItemFromDemo(rawScheduleID string) (FeedbackItem, bool, error) {
+	item, found := demo.FeedbackBySchedule(rawScheduleID)
+	if !found {
+		return FeedbackItem{}, false, nil
+	}
+
+	return FeedbackItem{
+		ID:             uint64(item.ID),
+		ScheduleID:     uint64(item.ScheduleID),
+		ClassID:        uint64(item.ClassID),
+		ClassName:      item.ClassName,
+		CourseName:     item.CourseName,
+		TeacherName:    item.TeacherName,
+		LessonDate:     item.LessonDate,
+		Summary:        item.Summary,
+		LearningStatus: item.LearningStatus,
+		NextSuggestion: item.NextSuggestion,
+		ParentNotice:   item.ParentNotice,
+	}, true, nil
+}
+
+func feedbackItemFromDemoWithSchedule(scheduleItem ScheduleItem) (FeedbackItem, bool) {
+	item, found := demo.FeedbackBySchedule(fmt.Sprintf("%d", scheduleItem.ID))
+	if !found {
+		return FeedbackItem{}, false
+	}
+
+	return FeedbackItem{
+		ID:             uint64(item.ID),
+		ScheduleID:     scheduleItem.ID,
+		ClassID:        scheduleItem.ClassID,
+		ClassName:      scheduleItem.ClassName,
+		CourseName:     scheduleItem.CourseName,
+		TeacherName:    scheduleItem.TeacherName,
+		LessonDate:     scheduleItem.LessonDate,
+		Summary:        item.Summary,
+		LearningStatus: item.LearningStatus,
+		NextSuggestion: item.NextSuggestion,
+		ParentNotice:   item.ParentNotice,
+	}, true
+}
+
 func summarizeAttendanceItems(items []AttendanceItem) (int, int, int, int) {
 	presentCount := 0
 	leaveCount := 0
@@ -1586,6 +2301,15 @@ func nextSavedAttendanceStatus(pendingCount int) string {
 	}
 
 	return "已完成"
+}
+
+func normalizeHomeworkStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "draft", "published":
+		return strings.TrimSpace(status)
+	default:
+		return ""
+	}
 }
 
 func (s *Service) courseQuery(filter CourseFilter) *gorm.DB {

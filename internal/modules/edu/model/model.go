@@ -124,3 +124,29 @@ type AttendanceRecord struct {
 	CreatedAt  time.Time  `gorm:"not null"`
 	UpdatedAt  time.Time  `gorm:"not null"`
 }
+
+type Homework struct {
+	ID              uint64    `gorm:"primaryKey"`
+	ScheduleID      uint64    `gorm:"column:schedule_id;not null;index;uniqueIndex:uk_homeworks_schedule_id"`
+	ClassID         uint64    `gorm:"column:class_id;not null;index"`
+	Title           string    `gorm:"size:128;not null"`
+	Content         string    `gorm:"type:text;not null"`
+	SubmissionNote  string    `gorm:"column:submission_note;type:text"`
+	CreatedByUserID uint64    `gorm:"column:created_by_user_id;not null"`
+	Status          string    `gorm:"size:32;not null;default:'draft'"`
+	CreatedAt       time.Time `gorm:"not null"`
+	UpdatedAt       time.Time `gorm:"not null"`
+}
+
+type ClassFeedback struct {
+	ID              uint64    `gorm:"primaryKey"`
+	ScheduleID      uint64    `gorm:"column:schedule_id;not null;index;uniqueIndex:uk_class_feedbacks_schedule_id"`
+	ClassID         uint64    `gorm:"column:class_id;not null;index"`
+	Summary         string    `gorm:"type:text"`
+	LearningStatus  string    `gorm:"column:learning_status;type:text"`
+	NextSuggestion  string    `gorm:"column:next_suggestion;type:text"`
+	ParentNotice    string    `gorm:"column:parent_notice;type:text"`
+	CreatedByUserID uint64    `gorm:"column:created_by_user_id;not null"`
+	CreatedAt       time.Time `gorm:"not null"`
+	UpdatedAt       time.Time `gorm:"not null"`
+}
