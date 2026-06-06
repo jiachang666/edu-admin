@@ -39,6 +39,12 @@ export type TeacherPayload = {
   remark: string;
 };
 
+export type TeacherDetail = {
+  teacher: Teacher;
+  classes: SchoolClass[];
+  recentSchedules: Schedule[];
+};
+
 export type Course = {
   id: number;
   name: string;
@@ -459,6 +465,10 @@ export function createTeacher(payload: TeacherPayload) {
 
 export function updateTeacher(id: number, payload: TeacherPayload) {
   return unwrap<Teacher>(http.patch(`/teachers/${id}`, payload));
+}
+
+export function fetchTeacherDetail(teacherId: number) {
+  return unwrap<TeacherDetail>(http.get(`/teachers/${teacherId}`));
 }
 
 export function fetchTeacherOptions() {

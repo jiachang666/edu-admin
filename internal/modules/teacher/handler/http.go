@@ -93,7 +93,7 @@ func (h *Handler) detail(c *gin.Context) {
 		return
 	}
 
-	teacher, found, teacherErr := h.service.Teacher(c.Param("id"))
+	teacherDetail, found, teacherErr := h.service.TeacherDetail(c.Param("id"))
 	if teacherErr != nil {
 		response.InternalServerError(c)
 		return
@@ -103,7 +103,7 @@ func (h *Handler) detail(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, teacher)
+	response.Success(c, teacherDetail)
 }
 
 func (h *Handler) update(c *gin.Context) {

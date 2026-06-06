@@ -4,6 +4,7 @@ import { useAuthStore } from "../stores/auth";
 import LoginView from "../views/auth/LoginView.vue";
 import DashboardView from "../views/dashboard/DashboardView.vue";
 import TeacherListView from "../views/teachers/TeacherListView.vue";
+import TeacherDetailView from "../views/teachers/TeacherDetailView.vue";
 import StudentListView from "../views/students/StudentListView.vue";
 import StudentDetailView from "../views/students/StudentDetailView.vue";
 import CourseListView from "../views/courses/CourseListView.vue";
@@ -84,6 +85,16 @@ const router = createRouter({
             title: "老师管理",
             eyebrow: "Faculty Ledger",
             description: "统一查看老师的科目、校区分布和当前授课负载。",
+          },
+        },
+        {
+          path: "teachers/:id",
+          name: "teacher-detail",
+          component: TeacherDetailView,
+          meta: {
+            title: "老师详情",
+            eyebrow: "Teacher Hub",
+            description: "把老师的基本资料、负责班级和近期课程安排集中在同一页里，方便教务快速判断谁在带什么班。",
           },
         },
         {

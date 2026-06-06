@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import {
   createTeacher,
   fetchTeacherList,
@@ -10,6 +11,7 @@ import {
 } from "../../api/education";
 import { useAuthStore } from "../../stores/auth";
 
+const router = useRouter();
 const authStore = useAuthStore();
 
 const loading = ref(false);
@@ -208,6 +210,10 @@ function handleReset() {
   filters.campus = "";
 }
 
+function openTeacherDetail(teacherId: number) {
+  void router.push(`/teachers/${teacherId}`);
+}
+
 onMounted(() => {
   void loadTeachers();
 });
@@ -326,7 +332,9 @@ onMounted(() => {
           <el-table-column label="老师" min-width="170">
             <template #default="{ row }">
               <div class="table-primary">
-                <strong>{{ row.name }}</strong>
+                <el-button link type="primary" @click="openTeacherDetail(row.id)">
+                  {{ row.name }}
+                </el-button>
                 <small>{{ row.title || "未填写职级" }}</small>
               </div>
             </template>
@@ -348,9 +356,19 @@ onMounted(() => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column v-if="canManageTeachers" label="操作" width="100" fixed="right">
+          <el-table-column label="操作" :width="canManageTeachers ? 160 : 120" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
+              <div class="table-link-group">
+                <el-button link type="primary" @click="openTeacherDetail(row.id)">进入详情</el-button>
+                <el-button
+                  v-if="canManageTeachers"
+                  link
+                  type="primary"
+                  @click="openEditDialog(row)"
+                >
+                  编辑资料
+                </el-button>
+              </div>
             </template>
           </el-table-column>
         </el-table>
