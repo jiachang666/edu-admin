@@ -2546,6 +2546,30 @@ func (s *Service) Schedule(rawID string) (ScheduleItem, bool, error) {
 	return ScheduleItem{}, false, nil
 }
 
+func (s *Service) ClassAccessible(rawID string, scope Scope) (ClassItem, bool, error) {
+	classItem, found, classErr := s.Class(rawID)
+	if classErr != nil {
+		return ClassItem{}, false, classErr
+	}
+	if !found || !s.ScopeAllowsTeacher(scope, classItem.TeacherID) {
+		return ClassItem{}, false, nil
+	}
+
+	return classItem, true, nil
+}
+
+func (s *Service) ScheduleAccessible(rawID string, scope Scope) (ScheduleItem, bool, error) {
+	scheduleItem, found, scheduleErr := s.Schedule(rawID)
+	if scheduleErr != nil {
+		return ScheduleItem{}, false, scheduleErr
+	}
+	if !found || !s.ScopeAllowsTeacher(scope, scheduleItem.TeacherID) {
+		return ScheduleItem{}, false, nil
+	}
+
+	return scheduleItem, true, nil
+}
+
 func (s *Service) CreateSchedule(payload SchedulePayload, operator Operator) (ScheduleItem, error) {
 	classItem, found, classErr := s.Class(fmt.Sprintf("%d", payload.ClassID))
 	if classErr != nil {
@@ -5943,6 +5967,51 @@ func (s *Service) noticeMatchesScope(scope Scope, noticeItem NoticeItem) (bool, 
 	return s.anyStudentBelongsToTeacher(noticeItem.StudentIDs, scope.TeacherID)
 }
 
+func (s *Service) NoticePayloadAccessible(input NoticePayload, scope Scope) (bool, error) {
+	if !scope.RestrictToSelf {
+		return true, nil
+	}
+	if scope.TeacherID == 0 {
+		return false, nil
+	}
+
+	hasScopedTarget := false
+	if input.RelatedScheduleID > 0 {
+		scheduleItem, found, scheduleErr := s.Schedule(fmt.Sprintf("%d", input.RelatedScheduleID))
+		if scheduleErr != nil {
+			return false, scheduleErr
+		}
+		if !found || scheduleItem.TeacherID != scope.TeacherID {
+			return false, nil
+		}
+		hasScopedTarget = true
+	}
+
+	if input.RelatedClassID > 0 {
+		classItem, found, classErr := s.Class(fmt.Sprintf("%d", input.RelatedClassID))
+		if classErr != nil {
+			return false, classErr
+		}
+		if !found || classItem.TeacherID != scope.TeacherID {
+			return false, nil
+		}
+		hasScopedTarget = true
+	}
+
+	if len(input.StudentIDs) > 0 {
+		allMatched, matchErr := s.allStudentsBelongToTeacher(input.StudentIDs, scope.TeacherID)
+		if matchErr != nil {
+			return false, matchErr
+		}
+		if !allMatched {
+			return false, nil
+		}
+		hasScopedTarget = true
+	}
+
+	return hasScopedTarget, nil
+}
+
 func (s *Service) anyStudentBelongsToTeacher(studentIDs []uint64, teacherID uint64) (bool, error) {
 	if teacherID == 0 || len(studentIDs) == 0 {
 		return false, nil
@@ -5983,6 +6052,65 @@ LIMIT 1
 	}
 
 	return row.StudentID > 0, nil
+}
+
+func (s *Service) allStudentsBelongToTeacher(studentIDs []uint64, teacherID uint64) (bool, error) {
+	uniqueStudentIDs := uniqueUint64s(studentIDs)
+	if teacherID == 0 || len(uniqueStudentIDs) == 0 {
+		return false, nil
+	}
+
+	if s.db == nil {
+		for _, studentID := range uniqueStudentIDs {
+			classes := demo.StudentClasses(fmt.Sprintf("%d", studentID))
+			matched := false
+			for _, classItem := range classes {
+				if uint64(classItem.TeacherID) != teacherID {
+					continue
+				}
+				matched = true
+				break
+			}
+			if !matched {
+				return false, nil
+			}
+		}
+
+		return true, nil
+	}
+
+	type studentMatchRow struct {
+		StudentID uint64 `gorm:"column:student_id"`
+	}
+
+	var rows []studentMatchRow
+	query := `
+SELECT DISTINCT cs.student_id
+FROM class_students AS cs
+JOIN classes AS c
+  ON c.id = cs.class_id
+WHERE cs.student_id IN ?
+  AND cs.status = ?
+  AND c.teacher_id = ?
+`
+
+	listErr := s.db.Raw(query, uniqueStudentIDs, activeClassStudentStatus, teacherID).Scan(&rows).Error
+	if listErr != nil {
+		return false, listErr
+	}
+
+	matchedStudentIDs := make(map[uint64]struct{}, len(rows))
+	for _, row := range rows {
+		matchedStudentIDs[row.StudentID] = struct{}{}
+	}
+
+	for _, studentID := range uniqueStudentIDs {
+		if _, exists := matchedStudentIDs[studentID]; !exists {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 func matchesDateRange(targetDate string, dateFrom string, dateTo string) bool {
