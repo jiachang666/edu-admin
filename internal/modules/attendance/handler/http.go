@@ -29,6 +29,12 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	mode := strings.TrimSpace(c.Query("mode"))
 	classID, classErr := parseUintParam(c.Query("classId"))
 	if classErr != nil {
@@ -50,6 +56,7 @@ func (h *Handler) list(c *gin.Context) {
 			StudentID: studentID,
 			Date:      dateFilter,
 			Status:    statusFilter,
+			Scope:     scope,
 		})
 		if itemErr != nil {
 			response.InternalServerError(c)
@@ -60,7 +67,7 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	items, itemErr := h.service.AttendanceSessions()
+	items, itemErr := h.service.AttendanceSessionsWithScope(scope)
 	if itemErr != nil {
 		response.InternalServerError(c)
 		return

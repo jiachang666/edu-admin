@@ -20,7 +20,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) overview(c *gin.Context) {
-	overview, overviewErr := h.service.Overview()
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	overview, overviewErr := h.service.OverviewWithScope(scope)
 	if overviewErr != nil {
 		response.InternalServerError(c)
 		return

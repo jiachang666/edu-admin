@@ -1466,6 +1466,7 @@ func defaultRolePermissions(roleCode string) []string {
 	case "teacher":
 		return uniqueSortedStrings([]string{
 			"dashboard:view",
+			"classes:view",
 			"schedules:view",
 			"attendance:view",
 			"attendance:manage",

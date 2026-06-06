@@ -24,6 +24,13 @@ type Service struct {
 	db *gorm.DB
 }
 
+type Scope struct {
+	UserID         uint64
+	PrimaryRole    string
+	TeacherID      uint64
+	RestrictToSelf bool
+}
+
 type Option struct {
 	Value uint64 `json:"value"`
 	Label string `json:"label"`
@@ -68,6 +75,7 @@ type ClassFilter struct {
 	Status    string
 	CourseID  uint64
 	TeacherID uint64
+	Scope     Scope
 }
 
 type TeacherPayload struct {
@@ -320,6 +328,7 @@ type NoticeFilter struct {
 	Date       string
 	DateFrom   string
 	DateTo     string
+	Scope      Scope
 }
 
 type AttendanceItem struct {
@@ -356,6 +365,7 @@ type AttendanceRecordFilter struct {
 	StudentID uint64
 	Date      string
 	Status    string
+	Scope     Scope
 }
 
 type AttendanceRecordItem struct {
@@ -410,6 +420,7 @@ type HomeworkFilter struct {
 	TeacherID uint64
 	DateFrom  string
 	DateTo    string
+	Scope     Scope
 }
 
 type FeedbackItem struct {
@@ -438,6 +449,7 @@ type FeedbackFilter struct {
 	TeacherID uint64
 	DateFrom  string
 	DateTo    string
+	Scope     Scope
 }
 
 func New(db *gorm.DB) *Service {
@@ -479,6 +491,10 @@ func (s *Service) Bootstrap(autoSeed bool) error {
 }
 
 func (s *Service) Overview() (map[string]any, error) {
+	return s.OverviewWithScope(Scope{})
+}
+
+func (s *Service) OverviewWithScope(scope Scope) (map[string]any, error) {
 	if s.db == nil {
 		return demo.Overview(), nil
 	}
@@ -495,7 +511,7 @@ func (s *Service) Overview() (map[string]any, error) {
 		return nil, classCountErr
 	}
 
-	attendanceSessions, sessionErr := s.AttendanceSessions()
+	attendanceSessions, sessionErr := s.AttendanceSessionsWithScope(scope)
 	if sessionErr != nil {
 		return nil, sessionErr
 	}
@@ -536,12 +552,12 @@ func (s *Service) Overview() (map[string]any, error) {
 		return nil, draftHomeworkErr
 	}
 
-	upcomingLessons, scheduleErr := s.Schedules()
+	upcomingLessons, scheduleErr := s.SchedulesWithScope(scope)
 	if scheduleErr != nil {
 		return nil, scheduleErr
 	}
 
-	latestNotices, noticeErr := s.Notices()
+	latestNotices, noticeErr := s.NoticesWithFilter(NoticeFilter{Scope: scope})
 	if noticeErr != nil {
 		return nil, noticeErr
 	}
@@ -590,6 +606,70 @@ func (s *Service) Overview() (map[string]any, error) {
 		"upcomingLessons":      upcomingLessons,
 		"latestNotices":        latestNotices,
 	}, nil
+}
+
+func (s *Service) ScopeForUser(userID uint64, primaryRole string) (Scope, error) {
+	scope := Scope{
+		UserID:      userID,
+		PrimaryRole: strings.TrimSpace(primaryRole),
+	}
+
+	if scope.UserID == 0 || scope.PrimaryRole != "teacher" {
+		return scope, nil
+	}
+
+	teacherID, found, teacherErr := s.TeacherIDByUserID(scope.UserID)
+	if teacherErr != nil {
+		return Scope{}, teacherErr
+	}
+	if !found {
+		return scope, nil
+	}
+
+	scope.TeacherID = teacherID
+	scope.RestrictToSelf = true
+	return scope, nil
+}
+
+func (s *Service) ScopeAllowsTeacher(scope Scope, teacherID uint64) bool {
+	if !scope.RestrictToSelf {
+		return true
+	}
+
+	return scope.TeacherID > 0 && scope.TeacherID == teacherID
+}
+
+func (s *Service) TeacherIDByUserID(userID uint64) (uint64, bool, error) {
+	if userID == 0 {
+		return 0, false, nil
+	}
+
+	if s.db == nil {
+		if userID == 4 {
+			return 1, true, nil
+		}
+
+		return 0, false, nil
+	}
+
+	type teacherUserRow struct {
+		ID uint64 `gorm:"column:id"`
+	}
+
+	var row teacherUserRow
+	findErr := s.db.Model(&edumodel.Teacher{}).
+		Select("id").
+		Where("user_id = ?", userID).
+		Limit(1).
+		Scan(&row).Error
+	if findErr != nil {
+		return 0, false, findErr
+	}
+	if row.ID == 0 {
+		return 0, false, nil
+	}
+
+	return row.ID, true, nil
 }
 
 func (s *Service) Teachers() ([]TeacherItem, error) {
@@ -2056,8 +2136,26 @@ func (s *Service) ScheduleDetail(rawID string) (ScheduleDetail, bool, error) {
 }
 
 func (s *Service) Schedules() ([]ScheduleItem, error) {
+	return s.SchedulesWithScope(Scope{})
+}
+
+func (s *Service) SchedulesWithScope(scope Scope) ([]ScheduleItem, error) {
 	if s.db == nil {
-		return scheduleItemsFromDemo(demo.Schedules()), nil
+		items := scheduleItemsFromDemo(demo.Schedules())
+		if !scope.RestrictToSelf || scope.TeacherID == 0 {
+			return items, nil
+		}
+
+		filteredItems := make([]ScheduleItem, 0, len(items))
+		for _, item := range items {
+			if item.TeacherID != scope.TeacherID {
+				continue
+			}
+
+			filteredItems = append(filteredItems, item)
+		}
+
+		return filteredItems, nil
 	}
 
 	query := `
@@ -2084,6 +2182,16 @@ LEFT JOIN courses AS co
   ON co.id = s.course_id
 LEFT JOIN teachers AS t
   ON t.id = s.teacher_id
+WHERE 1 = 1
+`
+
+	args := make([]any, 0, 1)
+	if scope.RestrictToSelf && scope.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, scope.TeacherID)
+	}
+
+	query += `
 ORDER BY s.schedule_date ASC, s.start_time ASC, s.id ASC
 `
 
@@ -2106,7 +2214,7 @@ ORDER BY s.schedule_date ASC, s.start_time ASC, s.id ASC
 	}
 
 	var rows []scheduleRow
-	listErr := s.db.Raw(query).Scan(&rows).Error
+	listErr := s.db.Raw(query, args...).Scan(&rows).Error
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -2562,7 +2670,11 @@ func (s *Service) Attendance(rawScheduleID string) ([]AttendanceItem, error) {
 }
 
 func (s *Service) AttendanceSessions() ([]AttendanceSessionItem, error) {
-	schedules, scheduleErr := s.Schedules()
+	return s.AttendanceSessionsWithScope(Scope{})
+}
+
+func (s *Service) AttendanceSessionsWithScope(scope Scope) ([]AttendanceSessionItem, error) {
+	schedules, scheduleErr := s.SchedulesWithScope(scope)
 	if scheduleErr != nil {
 		return nil, scheduleErr
 	}
@@ -2599,7 +2711,7 @@ func (s *Service) AttendanceSessions() ([]AttendanceSessionItem, error) {
 }
 
 func (s *Service) AttendanceRecords(filter AttendanceRecordFilter) ([]AttendanceRecordItem, error) {
-	schedules, scheduleErr := s.Schedules()
+	schedules, scheduleErr := s.SchedulesWithScope(filter.Scope)
 	if scheduleErr != nil {
 		return nil, scheduleErr
 	}
@@ -2885,6 +2997,10 @@ WHERE 1 = 1
 		query += " AND s.teacher_id = ?"
 		args = append(args, filter.TeacherID)
 	}
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.Scope.TeacherID)
+	}
 	if strings.TrimSpace(filter.DateFrom) != "" {
 		query += " AND s.schedule_date >= ?"
 		args = append(args, strings.TrimSpace(filter.DateFrom))
@@ -3158,6 +3274,10 @@ WHERE 1 = 1
 		query += " AND s.teacher_id = ?"
 		args = append(args, filter.TeacherID)
 	}
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.Scope.TeacherID)
+	}
 	if strings.TrimSpace(filter.DateFrom) != "" {
 		query += " AND s.schedule_date >= ?"
 		args = append(args, strings.TrimSpace(filter.DateFrom))
@@ -3423,6 +3543,17 @@ WHERE 1 = 1
 	if filter.ClassID > 0 {
 		query += " AND COALESCE(related_class_id, 0) = ?"
 		queryArgs = append(queryArgs, filter.ClassID)
+	}
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		query += ` AND (
+COALESCE(related_schedule_id, 0) IN (
+  SELECT id FROM class_schedules WHERE teacher_id = ?
+)
+OR COALESCE(related_class_id, 0) IN (
+  SELECT id FROM classes WHERE teacher_id = ?
+)
+)`
+		queryArgs = append(queryArgs, filter.Scope.TeacherID, filter.Scope.TeacherID)
 	}
 
 	filterDate := strings.TrimSpace(filter.Date)
@@ -5355,6 +5486,10 @@ COALESCE(c.remark, '') AS remark
 
 	if filter.TeacherID > 0 {
 		classQuery = classQuery.Where("c.teacher_id = ?", filter.TeacherID)
+	}
+
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		classQuery = classQuery.Where("c.teacher_id = ?", filter.Scope.TeacherID)
 	}
 
 	return classQuery.Group(`
