@@ -78,6 +78,15 @@ type ClassFilter struct {
 	Scope     Scope
 }
 
+type ScheduleFilter struct {
+	ClassID   uint64
+	TeacherID uint64
+	DateFrom  string
+	DateTo    string
+	Status    string
+	Scope     Scope
+}
+
 type TeacherPayload struct {
 	UserID         uint64
 	Name           string
@@ -2389,26 +2398,16 @@ func (s *Service) ScheduleDetail(rawID string) (ScheduleDetail, bool, error) {
 }
 
 func (s *Service) Schedules() ([]ScheduleItem, error) {
-	return s.SchedulesWithScope(Scope{})
+	return s.SchedulesWithFilter(ScheduleFilter{})
 }
 
 func (s *Service) SchedulesWithScope(scope Scope) ([]ScheduleItem, error) {
+	return s.SchedulesWithFilter(ScheduleFilter{Scope: scope})
+}
+
+func (s *Service) SchedulesWithFilter(filter ScheduleFilter) ([]ScheduleItem, error) {
 	if s.db == nil {
-		items := scheduleItemsFromDemo(demo.Schedules())
-		if !scope.RestrictToSelf || scope.TeacherID == 0 {
-			return items, nil
-		}
-
-		filteredItems := make([]ScheduleItem, 0, len(items))
-		for _, item := range items {
-			if item.TeacherID != scope.TeacherID {
-				continue
-			}
-
-			filteredItems = append(filteredItems, item)
-		}
-
-		return filteredItems, nil
+		return scheduleItemsFromDemoWithFilter(filter), nil
 	}
 
 	query := `
@@ -2438,10 +2437,33 @@ LEFT JOIN teachers AS t
 WHERE 1 = 1
 `
 
-	args := make([]any, 0, 1)
-	if scope.RestrictToSelf && scope.TeacherID > 0 {
+	args := make([]any, 0, 5)
+	if filter.ClassID > 0 {
+		query += " AND s.class_id = ?"
+		args = append(args, filter.ClassID)
+	}
+	if filter.TeacherID > 0 {
 		query += " AND s.teacher_id = ?"
-		args = append(args, scope.TeacherID)
+		args = append(args, filter.TeacherID)
+	}
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.Scope.TeacherID)
+	}
+	filterDateFrom := strings.TrimSpace(filter.DateFrom)
+	if filterDateFrom != "" {
+		query += " AND s.schedule_date >= ?"
+		args = append(args, filterDateFrom)
+	}
+	filterDateTo := strings.TrimSpace(filter.DateTo)
+	if filterDateTo != "" {
+		query += " AND s.schedule_date <= ?"
+		args = append(args, filterDateTo)
+	}
+	filterStatus := strings.TrimSpace(filter.Status)
+	if filterStatus != "" {
+		query += " AND s.status = ?"
+		args = append(args, filterStatus)
 	}
 
 	query += `
@@ -5452,6 +5474,34 @@ func scheduleItemsFromDemo(source []demo.Schedule) []ScheduleItem {
 		})
 	}
 	return items
+}
+
+func scheduleItemsFromDemoWithFilter(filter ScheduleFilter) []ScheduleItem {
+	items := scheduleItemsFromDemo(demo.Schedules())
+	filteredItems := make([]ScheduleItem, 0, len(items))
+	filterStatus := strings.TrimSpace(filter.Status)
+
+	for _, item := range items {
+		if filter.ClassID > 0 && item.ClassID != filter.ClassID {
+			continue
+		}
+		if filter.TeacherID > 0 && item.TeacherID != filter.TeacherID {
+			continue
+		}
+		if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 && item.TeacherID != filter.Scope.TeacherID {
+			continue
+		}
+		if filterStatus != "" && item.AttendanceStatus != filterStatus {
+			continue
+		}
+		if !matchesDateRange(item.LessonDate, filter.DateFrom, filter.DateTo) {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
 }
 
 func noticeItemsFromDemo(source []demo.Notice) []NoticeItem {
