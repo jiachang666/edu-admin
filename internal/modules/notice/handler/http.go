@@ -4,6 +4,7 @@ import (
 	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -14,13 +15,14 @@ type Handler struct {
 }
 
 type noticePayload struct {
-	Title          string `json:"title"`
-	Content        string `json:"content"`
-	Category       string `json:"category"`
-	TargetScope    string `json:"targetScope"`
-	RelatedClassID uint64 `json:"relatedClassId"`
-	Status         string `json:"status"`
-	Author         string `json:"author"`
+	Title             string `json:"title"`
+	Content           string `json:"content"`
+	Category          string `json:"category"`
+	TargetScope       string `json:"targetScope"`
+	RelatedClassID    uint64 `json:"relatedClassId"`
+	RelatedScheduleID uint64 `json:"relatedScheduleId"`
+	Status            string `json:"status"`
+	Author            string `json:"author"`
 }
 
 func New(service *eduservice.Service) *Handler {
@@ -42,7 +44,17 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	notices, noticeErr := h.service.Notices()
+	classID, classErr := parseNoticeUintParam(c.Query("classId"))
+	if classErr != nil {
+		response.Failed(c, 400, "class id is invalid")
+		return
+	}
+
+	notices, noticeErr := h.service.NoticesWithFilter(eduservice.NoticeFilter{
+		ClassID: classID,
+		Status:  strings.TrimSpace(c.Query("status")),
+		Date:    strings.TrimSpace(c.Query("date")),
+	})
 	if noticeErr != nil {
 		response.InternalServerError(c)
 		return
@@ -157,13 +169,14 @@ func bindNoticePayload(c *gin.Context) (eduservice.NoticePayload, bool) {
 	}
 
 	input := eduservice.NoticePayload{
-		Title:          strings.TrimSpace(payload.Title),
-		Content:        strings.TrimSpace(payload.Content),
-		Category:       strings.TrimSpace(payload.Category),
-		TargetScope:    strings.TrimSpace(payload.TargetScope),
-		RelatedClassID: payload.RelatedClassID,
-		Status:         strings.TrimSpace(payload.Status),
-		Author:         strings.TrimSpace(payload.Author),
+		Title:             strings.TrimSpace(payload.Title),
+		Content:           strings.TrimSpace(payload.Content),
+		Category:          strings.TrimSpace(payload.Category),
+		TargetScope:       strings.TrimSpace(payload.TargetScope),
+		RelatedClassID:    payload.RelatedClassID,
+		RelatedScheduleID: payload.RelatedScheduleID,
+		Status:            strings.TrimSpace(payload.Status),
+		Author:            strings.TrimSpace(payload.Author),
 	}
 
 	validationMessage := validateNoticePayload(input)
@@ -199,4 +212,13 @@ func validateNoticePayload(input eduservice.NoticePayload) string {
 	}
 
 	return ""
+}
+
+func parseNoticeUintParam(rawValue string) (uint64, error) {
+	trimmedValue := strings.TrimSpace(rawValue)
+	if trimmedValue == "" {
+		return 0, nil
+	}
+
+	return strconv.ParseUint(trimmedValue, 10, 64)
 }

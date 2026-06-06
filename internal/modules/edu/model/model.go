@@ -127,33 +127,35 @@ type ClassStudent struct {
 }
 
 type ClassSchedule struct {
-	ID           uint64    `gorm:"primaryKey"`
-	ClassID      uint64    `gorm:"column:class_id;not null;index"`
-	CourseID     uint64    `gorm:"column:course_id;not null;index"`
-	TeacherID    uint64    `gorm:"column:teacher_id;not null;index"`
-	ScheduleType string    `gorm:"column:schedule_type;size:32;not null;default:'常规课'"`
-	ScheduleDate time.Time `gorm:"column:schedule_date;type:date;not null;index"`
-	StartTime    string    `gorm:"column:start_time;size:8;not null"`
-	EndTime      string    `gorm:"column:end_time;size:8;not null"`
-	Location     string    `gorm:"size:128"`
-	Status       string    `gorm:"size:32;not null;default:'待上课'"`
-	Remark       string    `gorm:"size:255"`
-	CreatedAt    time.Time `gorm:"not null"`
-	UpdatedAt    time.Time `gorm:"not null"`
+	ID               uint64    `gorm:"primaryKey"`
+	ClassID          uint64    `gorm:"column:class_id;not null;index"`
+	CourseID         uint64    `gorm:"column:course_id;not null;index"`
+	TeacherID        uint64    `gorm:"column:teacher_id;not null;index"`
+	SourceScheduleID *uint64   `gorm:"column:source_schedule_id;index"`
+	ScheduleType     string    `gorm:"column:schedule_type;size:32;not null;default:'常规课'"`
+	ScheduleDate     time.Time `gorm:"column:schedule_date;type:date;not null;index"`
+	StartTime        string    `gorm:"column:start_time;size:8;not null"`
+	EndTime          string    `gorm:"column:end_time;size:8;not null"`
+	Location         string    `gorm:"size:128"`
+	Status           string    `gorm:"size:32;not null;default:'待上课'"`
+	Remark           string    `gorm:"size:255"`
+	CreatedAt        time.Time `gorm:"not null"`
+	UpdatedAt        time.Time `gorm:"not null"`
 }
 
 type Notice struct {
-	ID             uint64     `gorm:"primaryKey"`
-	Title          string     `gorm:"size:128;not null"`
-	Content        string     `gorm:"type:text;not null"`
-	NoticeType     string     `gorm:"column:notice_type;size:32;not null;default:'校区通知'"`
-	TargetScope    string     `gorm:"column:target_scope;size:128;not null"`
-	AuthorName     string     `gorm:"column:author_name;size:64;not null"`
-	RelatedClassID *uint64    `gorm:"column:related_class_id"`
-	Status         string     `gorm:"size:32;not null;default:'草稿'"`
-	PublishAt      *time.Time `gorm:"column:publish_at"`
-	CreatedAt      time.Time  `gorm:"not null"`
-	UpdatedAt      time.Time  `gorm:"not null"`
+	ID                uint64     `gorm:"primaryKey"`
+	Title             string     `gorm:"size:128;not null"`
+	Content           string     `gorm:"type:text;not null"`
+	NoticeType        string     `gorm:"column:notice_type;size:32;not null;default:'校区通知'"`
+	TargetScope       string     `gorm:"column:target_scope;size:128;not null"`
+	AuthorName        string     `gorm:"column:author_name;size:64;not null"`
+	RelatedClassID    *uint64    `gorm:"column:related_class_id"`
+	RelatedScheduleID *uint64    `gorm:"column:related_schedule_id;index"`
+	Status            string     `gorm:"size:32;not null;default:'草稿'"`
+	PublishAt         *time.Time `gorm:"column:publish_at"`
+	CreatedAt         time.Time  `gorm:"not null"`
+	UpdatedAt         time.Time  `gorm:"not null"`
 }
 
 type AttendanceRecord struct {

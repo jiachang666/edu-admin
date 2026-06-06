@@ -70,6 +70,7 @@ type Class struct {
 type Schedule struct {
 	ID               int    `json:"id"`
 	ClassID          int    `json:"classId"`
+	SourceScheduleID int    `json:"sourceScheduleId"`
 	ClassName        string `json:"className"`
 	CourseName       string `json:"courseName"`
 	TeacherID        int    `json:"teacherId"`
@@ -82,15 +83,16 @@ type Schedule struct {
 }
 
 type Notice struct {
-	ID             int    `json:"id"`
-	Title          string `json:"title"`
-	Content        string `json:"content"`
-	Category       string `json:"category"`
-	TargetScope    string `json:"targetScope"`
-	RelatedClassID int    `json:"relatedClassId"`
-	Status         string `json:"status"`
-	PublishAt      string `json:"publishAt"`
-	Author         string `json:"author"`
+	ID                int    `json:"id"`
+	Title             string `json:"title"`
+	Content           string `json:"content"`
+	Category          string `json:"category"`
+	TargetScope       string `json:"targetScope"`
+	RelatedClassID    int    `json:"relatedClassId"`
+	RelatedScheduleID int    `json:"relatedScheduleId"`
+	Status            string `json:"status"`
+	PublishAt         string `json:"publishAt"`
+	Author            string `json:"author"`
 }
 
 type Option struct {
@@ -194,9 +196,9 @@ func Schedules() []Schedule {
 	tomorrow := now.AddDate(0, 0, 1).Format(dateLayout)
 
 	schedules := []Schedule{
-		{ID: 1, ClassID: 1, ClassName: "周末奥数提高班", CourseName: "数学思维", TeacherID: 1, TeacherName: "周老师", Campus: "明发校区", Classroom: "A201", LessonDate: today, LessonTime: "09:00-10:30", AttendanceStatus: "待签到"},
-		{ID: 2, ClassID: 2, ClassName: "英语阅读进阶班", CourseName: "英语阅读", TeacherID: 2, TeacherName: "林老师", Campus: "百汇校区", Classroom: "B103", LessonDate: today, LessonTime: "14:00-15:30", AttendanceStatus: "已完成"},
-		{ID: 3, ClassID: 3, ClassName: "少儿创意美术班", CourseName: "创意美术", TeacherID: 3, TeacherName: "陈老师", Campus: "明发校区", Classroom: "Art-2", LessonDate: tomorrow, LessonTime: "10:00-11:30", AttendanceStatus: "待上课"},
+		{ID: 1, ClassID: 1, SourceScheduleID: 0, ClassName: "周末奥数提高班", CourseName: "数学思维", TeacherID: 1, TeacherName: "周老师", Campus: "明发校区", Classroom: "A201", LessonDate: today, LessonTime: "09:00-10:30", AttendanceStatus: "待签到"},
+		{ID: 2, ClassID: 2, SourceScheduleID: 0, ClassName: "英语阅读进阶班", CourseName: "英语阅读", TeacherID: 2, TeacherName: "林老师", Campus: "百汇校区", Classroom: "B103", LessonDate: today, LessonTime: "14:00-15:30", AttendanceStatus: "已完成"},
+		{ID: 3, ClassID: 3, SourceScheduleID: 0, ClassName: "少儿创意美术班", CourseName: "创意美术", TeacherID: 3, TeacherName: "陈老师", Campus: "明发校区", Classroom: "Art-2", LessonDate: tomorrow, LessonTime: "10:00-11:30", AttendanceStatus: "待上课"},
 	}
 
 	attendanceStoreMu.RLock()
@@ -214,9 +216,9 @@ func Schedules() []Schedule {
 func Notices() []Notice {
 	now := time.Now()
 	defaultItems := []Notice{
-		{ID: 1, Title: "端午节放假安排", Content: "本周放假安排请注意查看。", Category: "校区通知", TargetScope: "全部学员家长", RelatedClassID: 0, Status: "已发送", PublishAt: now.Add(-6 * time.Hour).Format(dateTimeLayout), Author: "运营老师"},
-		{ID: 2, Title: "六月续费提醒名单确认", Content: "请班主任确认续费提醒名单，并及时跟进家长沟通。", Category: "续费提醒", TargetScope: "待续费学员家长", RelatedClassID: 0, Status: "草稿", PublishAt: now.Add(-2 * time.Hour).Format(dateTimeLayout), Author: "班主任"},
-		{ID: 3, Title: "周末美术课材料准备说明", Content: "请家长提前准备水彩笔与画纸，课堂上需要统一使用。", Category: "课程通知", TargetScope: "少儿创意美术班", RelatedClassID: 3, Status: "待发送", PublishAt: now.Add(2 * time.Hour).Format(dateTimeLayout), Author: "教务老师"},
+		{ID: 1, Title: "端午节放假安排", Content: "本周放假安排请注意查看。", Category: "校区通知", TargetScope: "全部学员家长", RelatedClassID: 0, RelatedScheduleID: 0, Status: "已发送", PublishAt: now.Add(-6 * time.Hour).Format(dateTimeLayout), Author: "运营老师"},
+		{ID: 2, Title: "六月续费提醒名单确认", Content: "请班主任确认续费提醒名单，并及时跟进家长沟通。", Category: "续费提醒", TargetScope: "待续费学员家长", RelatedClassID: 0, RelatedScheduleID: 0, Status: "草稿", PublishAt: now.Add(-2 * time.Hour).Format(dateTimeLayout), Author: "班主任"},
+		{ID: 3, Title: "周末美术课材料准备说明", Content: "请家长提前准备水彩笔与画纸，课堂上需要统一使用。", Category: "课程通知", TargetScope: "少儿创意美术班", RelatedClassID: 3, RelatedScheduleID: 3, Status: "待发送", PublishAt: now.Add(2 * time.Hour).Format(dateTimeLayout), Author: "教务老师"},
 	}
 
 	noticeStoreMu.RLock()

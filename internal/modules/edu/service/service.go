@@ -216,6 +216,7 @@ type ClassPayload struct {
 type ScheduleItem struct {
 	ID               uint64 `json:"id"`
 	ClassID          uint64 `json:"classId" gorm:"column:class_id"`
+	SourceScheduleID uint64 `json:"sourceScheduleId" gorm:"column:source_schedule_id"`
 	ClassName        string `json:"className" gorm:"column:class_name"`
 	CourseName       string `json:"courseName" gorm:"column:course_name"`
 	TeacherName      string `json:"teacherName" gorm:"column:teacher_name"`
@@ -258,15 +259,16 @@ type ScheduleDetail struct {
 }
 
 type NoticeItem struct {
-	ID             uint64 `json:"id"`
-	Title          string `json:"title"`
-	Content        string `json:"content"`
-	Category       string `json:"category"`
-	TargetScope    string `json:"targetScope" gorm:"column:target_scope"`
-	RelatedClassID uint64 `json:"relatedClassId" gorm:"column:related_class_id"`
-	Status         string `json:"status"`
-	PublishAt      string `json:"publishAt"`
-	Author         string `json:"author"`
+	ID                uint64 `json:"id"`
+	Title             string `json:"title"`
+	Content           string `json:"content"`
+	Category          string `json:"category"`
+	TargetScope       string `json:"targetScope" gorm:"column:target_scope"`
+	RelatedClassID    uint64 `json:"relatedClassId" gorm:"column:related_class_id"`
+	RelatedScheduleID uint64 `json:"relatedScheduleId" gorm:"column:related_schedule_id"`
+	Status            string `json:"status"`
+	PublishAt         string `json:"publishAt"`
+	Author            string `json:"author"`
 }
 
 type NoticeTargetItem struct {
@@ -276,13 +278,20 @@ type NoticeTargetItem struct {
 }
 
 type NoticePayload struct {
-	Title          string `json:"title"`
-	Content        string `json:"content"`
-	Category       string `json:"category"`
-	TargetScope    string `json:"targetScope"`
-	RelatedClassID uint64 `json:"relatedClassId"`
-	Status         string `json:"status"`
-	Author         string `json:"author"`
+	Title             string `json:"title"`
+	Content           string `json:"content"`
+	Category          string `json:"category"`
+	TargetScope       string `json:"targetScope"`
+	RelatedClassID    uint64
+	RelatedScheduleID uint64
+	Status            string `json:"status"`
+	Author            string `json:"author"`
+}
+
+type NoticeFilter struct {
+	ClassID uint64
+	Status  string
+	Date    string
 }
 
 type AttendanceItem struct {
@@ -1987,7 +1996,7 @@ func (s *Service) ScheduleDetail(rawID string) (ScheduleDetail, bool, error) {
 
 	relatedNotices := make([]NoticeItem, 0, len(notices))
 	for _, item := range notices {
-		if item.RelatedClassID == scheduleItem.ClassID {
+		if item.RelatedScheduleID == scheduleItem.ID || item.RelatedClassID == scheduleItem.ClassID {
 			relatedNotices = append(relatedNotices, item)
 		}
 	}
@@ -2012,6 +2021,7 @@ func (s *Service) Schedules() ([]ScheduleItem, error) {
 SELECT
   s.id,
   s.class_id,
+  COALESCE(s.source_schedule_id, 0) AS source_schedule_id,
   COALESCE(c.name, '') AS class_name,
   COALESCE(co.name, '') AS course_name,
   COALESCE(s.teacher_id, 0) AS teacher_id,
@@ -2037,6 +2047,7 @@ ORDER BY s.schedule_date ASC, s.start_time ASC, s.id ASC
 	type scheduleRow struct {
 		ID               uint64    `gorm:"column:id"`
 		ClassID          uint64    `gorm:"column:class_id"`
+		SourceScheduleID uint64    `gorm:"column:source_schedule_id"`
 		ClassName        string    `gorm:"column:class_name"`
 		CourseName       string    `gorm:"column:course_name"`
 		TeacherID        uint64    `gorm:"column:teacher_id"`
@@ -2062,6 +2073,7 @@ ORDER BY s.schedule_date ASC, s.start_time ASC, s.id ASC
 		items = append(items, ScheduleItem{
 			ID:               row.ID,
 			ClassID:          row.ClassID,
+			SourceScheduleID: row.SourceScheduleID,
 			ClassName:        row.ClassName,
 			CourseName:       row.CourseName,
 			TeacherID:        row.TeacherID,
@@ -2119,6 +2131,7 @@ func (s *Service) CreateSchedule(payload SchedulePayload) (ScheduleItem, error) 
 		return ScheduleItem{
 			ID:               createdID,
 			ClassID:          classItem.ID,
+			SourceScheduleID: 0,
 			ClassName:        classItem.Name,
 			CourseName:       classItem.CourseName,
 			TeacherID:        classItem.TeacherID,
@@ -2143,18 +2156,19 @@ func (s *Service) CreateSchedule(payload SchedulePayload) (ScheduleItem, error) 
 
 	now := time.Now()
 	record := edumodel.ClassSchedule{
-		ClassID:      classItem.ID,
-		CourseID:     courseID,
-		TeacherID:    classItem.TeacherID,
-		ScheduleType: scheduleType,
-		ScheduleDate: lessonDate,
-		StartTime:    strings.TrimSpace(payload.StartTime),
-		EndTime:      strings.TrimSpace(payload.EndTime),
-		Location:     strings.TrimSpace(payload.Classroom),
-		Status:       "待上课",
-		Remark:       strings.TrimSpace(payload.Remark),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ClassID:          classItem.ID,
+		CourseID:         courseID,
+		TeacherID:        classItem.TeacherID,
+		SourceScheduleID: nil,
+		ScheduleType:     scheduleType,
+		ScheduleDate:     lessonDate,
+		StartTime:        strings.TrimSpace(payload.StartTime),
+		EndTime:          strings.TrimSpace(payload.EndTime),
+		Location:         strings.TrimSpace(payload.Classroom),
+		Status:           "待上课",
+		Remark:           strings.TrimSpace(payload.Remark),
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 
 	createErr := s.db.Create(&record).Error
@@ -2207,6 +2221,7 @@ func (s *Service) UpdateSchedule(rawID string, payload SchedulePayload) (Schedul
 		return ScheduleItem{
 			ID:               scheduleItem.ID,
 			ClassID:          classItem.ID,
+			SourceScheduleID: scheduleItem.SourceScheduleID,
 			ClassName:        classItem.Name,
 			CourseName:       classItem.CourseName,
 			TeacherID:        classItem.TeacherID,
@@ -2269,46 +2284,86 @@ func (s *Service) Reschedule(rawID string, payload ScheduleActionPayload) (Sched
 		return ScheduleItem{}, false, nil
 	}
 
-	updatePayload := SchedulePayload{
+	if s.db == nil {
+		scheduleItem.AttendanceStatus = "已调课"
+		return scheduleItem, true, nil
+	}
+
+	replacementPayload := SchedulePayload{
 		ClassID:      scheduleItem.ClassID,
 		ScheduleType: "调课",
 		LessonDate:   payload.LessonDate,
 		StartTime:    payload.StartTime,
 		EndTime:      payload.EndTime,
 		Classroom:    payload.Classroom,
-		Remark:       payload.Remark,
+		Remark:       strings.TrimSpace(payload.Remark),
 	}
 
-	updatedItem, itemFound, updateErr := s.UpdateSchedule(rawID, updatePayload)
-	if updateErr != nil || !itemFound {
-		return updatedItem, itemFound, updateErr
+	replacementItem, createErr := s.CreateSchedule(replacementPayload)
+	if createErr != nil {
+		return ScheduleItem{}, false, createErr
+	}
+	if replacementItem.ID == 0 {
+		return ScheduleItem{}, false, nil
 	}
 
-	if s.db == nil {
-		updatedItem.AttendanceStatus = "已调课"
-		return updatedItem, true, nil
+	now := time.Now()
+	transactionErr := s.db.Transaction(func(tx *gorm.DB) error {
+		sourceScheduleID := scheduleItem.ID
+		updateReplacementErr := tx.Model(&edumodel.ClassSchedule{}).
+			Where("id = ?", replacementItem.ID).
+			Updates(map[string]any{
+				"source_schedule_id": sourceScheduleID,
+				"status":             "待上课",
+				"updated_at":         now,
+			}).Error
+		if updateReplacementErr != nil {
+			return updateReplacementErr
+		}
+
+		updateOriginalErr := tx.Model(&edumodel.ClassSchedule{}).
+			Where("id = ?", rawID).
+			Updates(map[string]any{
+				"status":     "已调课",
+				"updated_at": now,
+			}).Error
+		if updateOriginalErr != nil {
+			return updateOriginalErr
+		}
+
+		return nil
+	})
+	if transactionErr != nil {
+		return ScheduleItem{}, false, transactionErr
 	}
 
-	statusErr := s.db.Model(&edumodel.ClassSchedule{}).
-		Where("id = ?", rawID).
-		Updates(map[string]any{
-			"status":     "已调课",
-			"updated_at": time.Now(),
-		}).Error
-	if statusErr != nil {
-		return ScheduleItem{}, false, statusErr
+	noticeErr := s.createScheduleNotice(rawID, NoticePayload{
+		Title:             fmt.Sprintf("%s调课通知", scheduleItem.ClassName),
+		Content:           buildRescheduleNoticeContent(scheduleItem, replacementItem, strings.TrimSpace(payload.Remark)),
+		Category:          "调课通知",
+		TargetScope:       buildClassTargetScope(scheduleItem.ClassName),
+		RelatedClassID:    scheduleItem.ClassID,
+		RelatedScheduleID: replacementItem.ID,
+		Status:            "草稿",
+		Author:            "教务老师",
+	})
+	if noticeErr != nil {
+		return ScheduleItem{}, false, noticeErr
 	}
 
 	return s.Schedule(rawID)
 }
 
 func (s *Service) CancelSchedule(rawID string, payload ScheduleActionPayload) (ScheduleItem, bool, error) {
-	if s.db == nil {
-		scheduleItem, found, scheduleErr := s.Schedule(rawID)
-		if scheduleErr != nil || !found {
-			return scheduleItem, found, scheduleErr
-		}
+	scheduleItem, found, scheduleErr := s.Schedule(rawID)
+	if scheduleErr != nil {
+		return ScheduleItem{}, false, scheduleErr
+	}
+	if !found {
+		return ScheduleItem{}, false, nil
+	}
 
+	if s.db == nil {
 		scheduleItem.AttendanceStatus = "已停课"
 		scheduleItem.Remark = strings.TrimSpace(payload.Remark)
 		return scheduleItem, true, nil
@@ -2326,6 +2381,20 @@ func (s *Service) CancelSchedule(rawID string, payload ScheduleActionPayload) (S
 	}
 	if updateResult.RowsAffected == 0 {
 		return ScheduleItem{}, false, nil
+	}
+
+	noticeErr := s.createScheduleNotice(rawID, NoticePayload{
+		Title:             fmt.Sprintf("%s停课通知", scheduleItem.ClassName),
+		Content:           buildCancelNoticeContent(scheduleItem, strings.TrimSpace(payload.Remark)),
+		Category:          "停课提醒",
+		TargetScope:       buildClassTargetScope(scheduleItem.ClassName),
+		RelatedClassID:    scheduleItem.ClassID,
+		RelatedScheduleID: scheduleItem.ID,
+		Status:            "草稿",
+		Author:            "教务老师",
+	})
+	if noticeErr != nil {
+		return ScheduleItem{}, false, noticeErr
 	}
 
 	return s.Schedule(rawID)
@@ -2360,17 +2429,34 @@ func (s *Service) CreateMakeupSchedule(rawID string, payload ScheduleActionPaylo
 
 	if s.db == nil {
 		createdItem.AttendanceStatus = "待上课"
+		createdItem.SourceScheduleID = originalItem.ID
 		return createdItem, true, nil
 	}
 
-	statusErr := s.db.Model(&edumodel.ClassSchedule{}).
+	sourceScheduleID := originalItem.ID
+	sourceErr := s.db.Model(&edumodel.ClassSchedule{}).
 		Where("id = ?", createdItem.ID).
 		Updates(map[string]any{
-			"status":     "待上课",
-			"updated_at": time.Now(),
+			"source_schedule_id": sourceScheduleID,
+			"status":             "待上课",
+			"updated_at":         time.Now(),
 		}).Error
-	if statusErr != nil {
-		return ScheduleItem{}, false, statusErr
+	if sourceErr != nil {
+		return ScheduleItem{}, false, sourceErr
+	}
+
+	noticeErr := s.createScheduleNotice(rawID, NoticePayload{
+		Title:             fmt.Sprintf("%s补课通知", originalItem.ClassName),
+		Content:           buildMakeupNoticeContent(originalItem, createdItem, strings.TrimSpace(payload.Remark)),
+		Category:          "调课通知",
+		TargetScope:       buildClassTargetScope(originalItem.ClassName),
+		RelatedClassID:    originalItem.ClassID,
+		RelatedScheduleID: createdItem.ID,
+		Status:            "草稿",
+		Author:            "教务老师",
+	})
+	if noticeErr != nil {
+		return ScheduleItem{}, false, noticeErr
 	}
 
 	return s.Schedule(fmt.Sprintf("%d", createdItem.ID))
@@ -3234,8 +3320,12 @@ func (s *Service) SaveFeedback(rawScheduleID string, payload FeedbackPayload) (F
 }
 
 func (s *Service) Notices() ([]NoticeItem, error) {
+	return s.NoticesWithFilter(NoticeFilter{})
+}
+
+func (s *Service) NoticesWithFilter(filter NoticeFilter) ([]NoticeItem, error) {
 	if s.db == nil {
-		return noticeItemsFromDemo(demo.Notices()), nil
+		return s.noticeItemsFromDemoWithFilter(filter), nil
 	}
 
 	query := `
@@ -3246,43 +3336,66 @@ SELECT
   notice_type AS category,
   target_scope,
   COALESCE(related_class_id, 0) AS related_class_id,
+  COALESCE(related_schedule_id, 0) AS related_schedule_id,
   status,
   publish_at,
+  created_at,
   author_name AS author
 FROM notices
+WHERE (? = 0 OR COALESCE(related_class_id, 0) = ?)
+  AND (? = '' OR status = ?)
+  AND (? = '' OR DATE(COALESCE(publish_at, created_at)) = ?)
 ORDER BY COALESCE(publish_at, created_at) DESC, id DESC
 `
 
 	type noticeRow struct {
-		ID             uint64     `gorm:"column:id"`
-		Title          string     `gorm:"column:title"`
-		Content        string     `gorm:"column:content"`
-		Category       string     `gorm:"column:category"`
-		TargetScope    string     `gorm:"column:target_scope"`
-		RelatedClassID uint64     `gorm:"column:related_class_id"`
-		Status         string     `gorm:"column:status"`
-		PublishAt      *time.Time `gorm:"column:publish_at"`
-		Author         string     `gorm:"column:author"`
+		ID                uint64     `gorm:"column:id"`
+		Title             string     `gorm:"column:title"`
+		Content           string     `gorm:"column:content"`
+		Category          string     `gorm:"column:category"`
+		TargetScope       string     `gorm:"column:target_scope"`
+		RelatedClassID    uint64     `gorm:"column:related_class_id"`
+		RelatedScheduleID uint64     `gorm:"column:related_schedule_id"`
+		Status            string     `gorm:"column:status"`
+		PublishAt         *time.Time `gorm:"column:publish_at"`
+		CreatedAt         time.Time  `gorm:"column:created_at"`
+		Author            string     `gorm:"column:author"`
 	}
 
 	var rows []noticeRow
-	listErr := s.db.Raw(query).Scan(&rows).Error
+	filterDate := strings.TrimSpace(filter.Date)
+	filterStatus := strings.TrimSpace(filter.Status)
+	listErr := s.db.Raw(
+		query,
+		filter.ClassID,
+		filter.ClassID,
+		filterStatus,
+		filterStatus,
+		filterDate,
+		filterDate,
+	).Scan(&rows).Error
 	if listErr != nil {
 		return nil, listErr
 	}
 
 	items := make([]NoticeItem, 0, len(rows))
 	for _, row := range rows {
+		publishAt := formatDateTime(row.PublishAt)
+		if publishAt == "" {
+			publishAt = row.CreatedAt.Format(dateTimeLayout)
+		}
+
 		items = append(items, NoticeItem{
-			ID:             row.ID,
-			Title:          row.Title,
-			Content:        row.Content,
-			Category:       row.Category,
-			TargetScope:    row.TargetScope,
-			RelatedClassID: row.RelatedClassID,
-			Status:         row.Status,
-			PublishAt:      formatDateTime(row.PublishAt),
-			Author:         row.Author,
+			ID:                row.ID,
+			Title:             row.Title,
+			Content:           row.Content,
+			Category:          row.Category,
+			TargetScope:       row.TargetScope,
+			RelatedClassID:    row.RelatedClassID,
+			RelatedScheduleID: row.RelatedScheduleID,
+			Status:            row.Status,
+			PublishAt:         publishAt,
+			Author:            row.Author,
 		})
 	}
 
@@ -3311,31 +3424,66 @@ func (s *Service) NoticeTargets(rawNoticeID string) ([]NoticeTargetItem, error) 
 
 	query := `
 SELECT
-  n.target_scope AS name,
-  CASE
-    WHEN n.target_scope LIKE '%家长%' THEN '家长群'
-    WHEN n.target_scope LIKE '%班%' THEN '班级群'
-    ELSE '通知范围'
-  END AS type,
-  COALESCE(c.campus, '') AS campus
+  n.target_scope AS scope_name,
+  COALESCE(c.name, '') AS class_name,
+  COALESCE(c.campus, '') AS campus,
+  COALESCE(cs.id, 0) AS schedule_id,
+  COALESCE(cs.schedule_date, NULL) AS schedule_date,
+  COALESCE(cs.start_time, '') AS start_time,
+  COALESCE(cs.end_time, '') AS end_time
 FROM notices AS n
 LEFT JOIN classes AS c
   ON c.id = n.related_class_id
+LEFT JOIN class_schedules AS cs
+  ON cs.id = n.related_schedule_id
 WHERE n.id = ?
 LIMIT 1
 `
 
-	var item NoticeTargetItem
-	findErr := s.db.Raw(query, rawNoticeID).Scan(&item).Error
+	type noticeTargetRow struct {
+		ScopeName    string     `gorm:"column:scope_name"`
+		ClassName    string     `gorm:"column:class_name"`
+		Campus       string     `gorm:"column:campus"`
+		ScheduleID   uint64     `gorm:"column:schedule_id"`
+		ScheduleDate *time.Time `gorm:"column:schedule_date"`
+		StartTime    string     `gorm:"column:start_time"`
+		EndTime      string     `gorm:"column:end_time"`
+	}
+
+	var row noticeTargetRow
+	findErr := s.db.Raw(query, rawNoticeID).Scan(&row).Error
 	if findErr != nil {
 		return nil, findErr
 	}
 
-	if item.Name == "" {
+	if row.ScopeName == "" && row.ClassName == "" {
 		return []NoticeTargetItem{}, nil
 	}
 
-	return []NoticeTargetItem{item}, nil
+	items := make([]NoticeTargetItem, 0, 3)
+	if row.ClassName != "" {
+		items = append(items, NoticeTargetItem{
+			Name:   row.ClassName,
+			Type:   "关联班级",
+			Campus: row.Campus,
+		})
+	}
+	if row.ScopeName != "" {
+		items = append(items, NoticeTargetItem{
+			Name:   row.ScopeName,
+			Type:   "通知范围",
+			Campus: row.Campus,
+		})
+	}
+	if row.ScheduleID > 0 && row.ScheduleDate != nil {
+		items = append(items, NoticeTargetItem{
+			Name:   fmt.Sprintf("%s %s", row.ScheduleDate.Format(dateLayout), formatLessonTime(row.StartTime, row.EndTime)),
+			Type:   "关联课程安排",
+			Campus: row.Campus,
+		})
+	}
+
+	return items, nil
 }
 
 func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
@@ -3350,27 +3498,29 @@ func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
 		}
 
 		item := NoticeItem{
-			ID:             uint64(nextID),
-			Title:          input.Title,
-			Content:        input.Content,
-			Category:       input.Category,
-			TargetScope:    input.TargetScope,
-			RelatedClassID: input.RelatedClassID,
-			Status:         input.Status,
-			PublishAt:      publishAt,
-			Author:         input.Author,
+			ID:                uint64(nextID),
+			Title:             input.Title,
+			Content:           input.Content,
+			Category:          input.Category,
+			TargetScope:       input.TargetScope,
+			RelatedClassID:    input.RelatedClassID,
+			RelatedScheduleID: input.RelatedScheduleID,
+			Status:            input.Status,
+			PublishAt:         publishAt,
+			Author:            input.Author,
 		}
 
 		demo.SaveNotice(demo.Notice{
-			ID:             nextID,
-			Title:          item.Title,
-			Content:        item.Content,
-			Category:       item.Category,
-			TargetScope:    item.TargetScope,
-			RelatedClassID: int(item.RelatedClassID),
-			Status:         item.Status,
-			PublishAt:      item.PublishAt,
-			Author:         item.Author,
+			ID:                nextID,
+			Title:             item.Title,
+			Content:           item.Content,
+			Category:          item.Category,
+			TargetScope:       item.TargetScope,
+			RelatedClassID:    int(item.RelatedClassID),
+			RelatedScheduleID: int(item.RelatedScheduleID),
+			Status:            item.Status,
+			PublishAt:         item.PublishAt,
+			Author:            item.Author,
 		})
 
 		return item, nil
@@ -3390,6 +3540,9 @@ func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
 	if input.RelatedClassID > 0 {
 		record.RelatedClassID = &input.RelatedClassID
 	}
+	if input.RelatedScheduleID > 0 {
+		record.RelatedScheduleID = &input.RelatedScheduleID
+	}
 	if input.Status == "已发送" || input.Status == "待发送" {
 		record.PublishAt = &now
 	}
@@ -3405,15 +3558,16 @@ func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
 	}
 	if !found {
 		return NoticeItem{
-			ID:             record.ID,
-			Title:          input.Title,
-			Content:        input.Content,
-			Category:       input.Category,
-			TargetScope:    input.TargetScope,
-			RelatedClassID: input.RelatedClassID,
-			Status:         input.Status,
-			PublishAt:      formatDateTime(record.PublishAt),
-			Author:         input.Author,
+			ID:                record.ID,
+			Title:             input.Title,
+			Content:           input.Content,
+			Category:          input.Category,
+			TargetScope:       input.TargetScope,
+			RelatedClassID:    input.RelatedClassID,
+			RelatedScheduleID: input.RelatedScheduleID,
+			Status:            input.Status,
+			PublishAt:         formatDateTime(record.PublishAt),
+			Author:            input.Author,
 		}, nil
 	}
 
@@ -3436,44 +3590,50 @@ func (s *Service) UpdateNotice(rawID string, input NoticePayload) (NoticeItem, b
 		}
 
 		item := NoticeItem{
-			ID:             uint64(rawItem.ID),
-			Title:          input.Title,
-			Content:        input.Content,
-			Category:       input.Category,
-			TargetScope:    input.TargetScope,
-			RelatedClassID: input.RelatedClassID,
-			Status:         input.Status,
-			PublishAt:      publishAt,
-			Author:         input.Author,
+			ID:                uint64(rawItem.ID),
+			Title:             input.Title,
+			Content:           input.Content,
+			Category:          input.Category,
+			TargetScope:       input.TargetScope,
+			RelatedClassID:    input.RelatedClassID,
+			RelatedScheduleID: input.RelatedScheduleID,
+			Status:            input.Status,
+			PublishAt:         publishAt,
+			Author:            input.Author,
 		}
 
 		demo.SaveNotice(demo.Notice{
-			ID:             rawItem.ID,
-			Title:          item.Title,
-			Content:        item.Content,
-			Category:       item.Category,
-			TargetScope:    item.TargetScope,
-			RelatedClassID: int(item.RelatedClassID),
-			Status:         item.Status,
-			PublishAt:      item.PublishAt,
-			Author:         item.Author,
+			ID:                rawItem.ID,
+			Title:             item.Title,
+			Content:           item.Content,
+			Category:          item.Category,
+			TargetScope:       item.TargetScope,
+			RelatedClassID:    int(item.RelatedClassID),
+			RelatedScheduleID: int(item.RelatedScheduleID),
+			Status:            item.Status,
+			PublishAt:         item.PublishAt,
+			Author:            item.Author,
 		})
 
 		return item, true, nil
 	}
 
 	updateValues := map[string]any{
-		"title":            input.Title,
-		"content":          input.Content,
-		"notice_type":      input.Category,
-		"target_scope":     input.TargetScope,
-		"related_class_id": nil,
-		"status":           input.Status,
-		"author_name":      input.Author,
-		"updated_at":       time.Now(),
+		"title":               input.Title,
+		"content":             input.Content,
+		"notice_type":         input.Category,
+		"target_scope":        input.TargetScope,
+		"related_class_id":    nil,
+		"related_schedule_id": nil,
+		"status":              input.Status,
+		"author_name":         input.Author,
+		"updated_at":          time.Now(),
 	}
 	if input.RelatedClassID > 0 {
 		updateValues["related_class_id"] = input.RelatedClassID
+	}
+	if input.RelatedScheduleID > 0 {
+		updateValues["related_schedule_id"] = input.RelatedScheduleID
 	}
 	if input.Status == "草稿" {
 		updateValues["publish_at"] = nil
@@ -3506,16 +3666,108 @@ func (s *Service) SendNotice(rawID string) (NoticeItem, bool, error) {
 	}
 
 	input := NoticePayload{
-		Title:          item.Title,
-		Content:        item.Content,
-		Category:       item.Category,
-		TargetScope:    item.TargetScope,
-		RelatedClassID: item.RelatedClassID,
-		Status:         "已发送",
-		Author:         item.Author,
+		Title:             item.Title,
+		Content:           item.Content,
+		Category:          item.Category,
+		TargetScope:       item.TargetScope,
+		RelatedClassID:    item.RelatedClassID,
+		RelatedScheduleID: item.RelatedScheduleID,
+		Status:            "已发送",
+		Author:            item.Author,
 	}
 
 	return s.UpdateNotice(rawID, input)
+}
+
+func (s *Service) createScheduleNotice(rawScheduleID string, input NoticePayload) error {
+	noticeItem, noticeFound, noticeErr := s.findNoticeByScheduleAndCategory(rawScheduleID, input.Category)
+	if noticeErr != nil {
+		return noticeErr
+	}
+	if noticeFound {
+		_, _, updateErr := s.UpdateNotice(fmt.Sprintf("%d", noticeItem.ID), input)
+		return updateErr
+	}
+
+	_, createErr := s.CreateNotice(input)
+	return createErr
+}
+
+func (s *Service) findNoticeByScheduleAndCategory(rawScheduleID string, category string) (NoticeItem, bool, error) {
+	notices, noticeErr := s.Notices()
+	if noticeErr != nil {
+		return NoticeItem{}, false, noticeErr
+	}
+
+	scheduleID, parseErr := strconv.ParseUint(rawScheduleID, 10, 64)
+	if parseErr != nil {
+		return NoticeItem{}, false, nil
+	}
+
+	for _, item := range notices {
+		if item.RelatedScheduleID == scheduleID && item.Category == category {
+			return item, true, nil
+		}
+	}
+
+	return NoticeItem{}, false, nil
+}
+
+func buildClassTargetScope(className string) string {
+	trimmedClassName := strings.TrimSpace(className)
+	if trimmedClassName == "" {
+		return "相关学员家长"
+	}
+
+	return fmt.Sprintf("%s家长群", trimmedClassName)
+}
+
+func buildRescheduleNoticeContent(originalItem ScheduleItem, replacementItem ScheduleItem, remark string) string {
+	message := fmt.Sprintf(
+		"%s原定于%s %s在%s上课，现调整为%s %s在%s上课，请家长留意时间变化。",
+		originalItem.ClassName,
+		originalItem.LessonDate,
+		originalItem.LessonTime,
+		originalItem.Classroom,
+		replacementItem.LessonDate,
+		replacementItem.LessonTime,
+		replacementItem.Classroom,
+	)
+	if remark != "" {
+		return fmt.Sprintf("%s 备注：%s", message, remark)
+	}
+
+	return message
+}
+
+func buildCancelNoticeContent(scheduleItem ScheduleItem, remark string) string {
+	message := fmt.Sprintf(
+		"%s原定于%s %s在%s上课，本次课程已停课，请家长留意后续安排。",
+		scheduleItem.ClassName,
+		scheduleItem.LessonDate,
+		scheduleItem.LessonTime,
+		scheduleItem.Classroom,
+	)
+	if remark != "" {
+		return fmt.Sprintf("%s 原因：%s", message, remark)
+	}
+
+	return message
+}
+
+func buildMakeupNoticeContent(originalItem ScheduleItem, createdItem ScheduleItem, remark string) string {
+	message := fmt.Sprintf(
+		"%s已新增补课安排，补课时间为%s %s，地点为%s，请家长提前做好到课安排。",
+		originalItem.ClassName,
+		createdItem.LessonDate,
+		createdItem.LessonTime,
+		createdItem.Classroom,
+	)
+	if remark != "" {
+		return fmt.Sprintf("%s 备注：%s", message, remark)
+	}
+
+	return message
 }
 
 func (s *Service) seedIfEmpty() error {
@@ -3875,12 +4127,14 @@ func scheduleItemsFromDemo(source []demo.Schedule) []ScheduleItem {
 		items = append(items, ScheduleItem{
 			ID:               uint64(item.ID),
 			ClassID:          uint64(item.ClassID),
+			SourceScheduleID: uint64(item.SourceScheduleID),
 			ClassName:        item.ClassName,
 			CourseName:       item.CourseName,
 			TeacherID:        uint64(item.TeacherID),
 			TeacherName:      item.TeacherName,
 			Campus:           item.Campus,
 			Classroom:        item.Classroom,
+			ScheduleType:     "常规课",
 			LessonDate:       item.LessonDate,
 			LessonTime:       item.LessonTime,
 			AttendanceStatus: item.AttendanceStatus,
@@ -3893,18 +4147,42 @@ func noticeItemsFromDemo(source []demo.Notice) []NoticeItem {
 	items := make([]NoticeItem, 0, len(source))
 	for _, item := range source {
 		items = append(items, NoticeItem{
-			ID:             uint64(item.ID),
-			Title:          item.Title,
-			Content:        item.Content,
-			Category:       item.Category,
-			TargetScope:    item.TargetScope,
-			RelatedClassID: uint64(item.RelatedClassID),
-			Status:         item.Status,
-			PublishAt:      item.PublishAt,
-			Author:         item.Author,
+			ID:                uint64(item.ID),
+			Title:             item.Title,
+			Content:           item.Content,
+			Category:          item.Category,
+			TargetScope:       item.TargetScope,
+			RelatedClassID:    uint64(item.RelatedClassID),
+			RelatedScheduleID: uint64(item.RelatedScheduleID),
+			Status:            item.Status,
+			PublishAt:         item.PublishAt,
+			Author:            item.Author,
 		})
 	}
 	return items
+}
+
+func (s *Service) noticeItemsFromDemoWithFilter(filter NoticeFilter) []NoticeItem {
+	items := noticeItemsFromDemo(demo.Notices())
+	filteredItems := make([]NoticeItem, 0, len(items))
+	filterDate := strings.TrimSpace(filter.Date)
+	filterStatus := strings.TrimSpace(filter.Status)
+
+	for _, item := range items {
+		if filter.ClassID > 0 && item.RelatedClassID != filter.ClassID {
+			continue
+		}
+		if filterStatus != "" && item.Status != filterStatus {
+			continue
+		}
+		if filterDate != "" && !strings.HasPrefix(item.PublishAt, filterDate) {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
 }
 
 func noticeTargetItemsFromDemo(source []demo.NoticeTarget) []NoticeTargetItem {
