@@ -44,6 +44,7 @@ func New(cfg *config.Config, logger *log.Logger, eduSvc *eduservice.Service) *gi
 
 	secured := api.Group("/")
 	secured.Use(middleware.RequireAuth(authSvc))
+	homeworkModule := homeworkhandler.New(eduSvc)
 
 	dashboardhandler.New(dashboardservice.New(eduSvc)).RegisterRoutes(secured.Group("/dashboard"))
 	userhandler.New(eduSvc).RegisterRoutes(secured.Group("/users"))
@@ -54,7 +55,8 @@ func New(cfg *config.Config, logger *log.Logger, eduSvc *eduservice.Service) *gi
 	classhandler.New(eduSvc).RegisterRoutes(secured.Group("/classes"))
 	schedulehandler.New(eduSvc).RegisterRoutes(secured.Group("/schedules"))
 	attendancehandler.New(eduSvc).RegisterRoutes(secured.Group("/attendance"))
-	homeworkhandler.New(eduSvc).RegisterRoutes(secured.Group("/homeworks"))
+	homeworkModule.RegisterRoutes(secured.Group("/homeworks"))
+	homeworkModule.RegisterFeedbackRoutes(secured.Group("/feedbacks"))
 	noticehandler.New(eduSvc).RegisterRoutes(secured.Group("/notices"))
 	audithandler.New(eduSvc).RegisterRoutes(secured.Group("/operation-logs"))
 
