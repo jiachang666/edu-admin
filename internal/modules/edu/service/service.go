@@ -31,6 +31,8 @@ type Option struct {
 
 type TeacherItem struct {
 	ID             uint64 `json:"id"`
+	UserID         uint64 `json:"userId" gorm:"column:user_id"`
+	UserName       string `json:"userName" gorm:"column:user_name"`
 	Name           string `json:"name"`
 	Mobile         string `json:"mobile"`
 	Title          string `json:"title"`
@@ -40,6 +42,13 @@ type TeacherItem struct {
 	Campus         string `json:"campus"`
 	Status         string `json:"status"`
 	Remark         string `json:"remark"`
+}
+
+type TeacherFilter struct {
+	Keyword        string
+	Status         string
+	EmploymentType string
+	Campus         string
 }
 
 type CourseFilter struct {
@@ -62,6 +71,7 @@ type ClassFilter struct {
 }
 
 type TeacherPayload struct {
+	UserID         uint64
 	Name           string
 	Mobile         string
 	Title          string
@@ -583,14 +593,17 @@ func (s *Service) Overview() (map[string]any, error) {
 }
 
 func (s *Service) Teachers() ([]TeacherItem, error) {
+	return s.TeachersWithFilter(TeacherFilter{})
+}
+
+func (s *Service) TeachersWithFilter(filter TeacherFilter) ([]TeacherItem, error) {
 	if s.db == nil {
-		return teacherItemsFromDemo(), nil
+		return s.teacherItemsFromDemoWithFilter(filter), nil
 	}
 
 	var items []TeacherItem
-	listErr := s.db.Model(&edumodel.Teacher{}).
-		Select("id, name, mobile, title, main_subject, employment_type, weekly_hours, campus, status, remark").
-		Order("id ASC").
+	listErr := s.teacherQuery(filter).
+		Order("t.id ASC").
 		Scan(&items).Error
 	if listErr != nil {
 		return nil, listErr
@@ -605,9 +618,9 @@ func (s *Service) Teacher(rawID string) (TeacherItem, bool, error) {
 	}
 
 	var item TeacherItem
-	findErr := s.db.Model(&edumodel.Teacher{}).
-		Select("id, name, mobile, title, main_subject, employment_type, weekly_hours, campus, status, remark").
-		Where("id = ?", rawID).
+	findErr := s.teacherQuery(TeacherFilter{}).
+		Where("t.id = ?", rawID).
+		Limit(1).
 		Scan(&item).Error
 	if findErr != nil {
 		return TeacherItem{}, false, findErr
@@ -624,6 +637,8 @@ func (s *Service) CreateTeacher(input TeacherPayload) (TeacherItem, error) {
 	if s.db == nil {
 		return TeacherItem{
 			ID:             1,
+			UserID:         input.UserID,
+			UserName:       demoTeacherUserName(input.UserID),
 			Name:           input.Name,
 			Mobile:         input.Mobile,
 			Title:          input.Title,
@@ -636,8 +651,14 @@ func (s *Service) CreateTeacher(input TeacherPayload) (TeacherItem, error) {
 		}, nil
 	}
 
+	bindErr := s.ensureTeacherUserBinding(input.UserID, 0)
+	if bindErr != nil {
+		return TeacherItem{}, bindErr
+	}
+
 	now := time.Now()
 	teacher := edumodel.Teacher{
+		UserID:         optionalUint64Pointer(input.UserID),
 		Name:           input.Name,
 		Mobile:         input.Mobile,
 		Title:          input.Title,
@@ -694,13 +715,26 @@ func (s *Service) UpdateTeacher(rawID string, input TeacherPayload) (TeacherItem
 		item.Campus = input.Campus
 		item.Status = input.Status
 		item.Remark = input.Remark
+		item.UserID = input.UserID
+		item.UserName = demoTeacherUserName(input.UserID)
 
 		return item, true, nil
+	}
+
+	teacherID, parseErr := strconv.ParseUint(rawID, 10, 64)
+	if parseErr != nil {
+		return TeacherItem{}, false, nil
+	}
+
+	bindErr := s.ensureTeacherUserBinding(input.UserID, teacherID)
+	if bindErr != nil {
+		return TeacherItem{}, false, bindErr
 	}
 
 	updateResult := s.db.Model(&edumodel.Teacher{}).
 		Where("id = ?", rawID).
 		Updates(map[string]any{
+			"user_id":         optionalUint64Pointer(input.UserID),
 			"name":            input.Name,
 			"mobile":          input.Mobile,
 			"title":           input.Title,
@@ -4173,7 +4207,7 @@ func (s *Service) seedIfEmpty() error {
 		tomorrow := today.AddDate(0, 0, 1)
 
 		teachers := []edumodel.Teacher{
-			{ID: 1, Name: "周老师", Mobile: "13800000001", MainSubject: "数学思维", EmploymentType: "全职", WeeklyHours: 18, Campus: "明发校区", Status: "在职", CreatedAt: now, UpdatedAt: now},
+			{ID: 1, UserID: uint64Pointer(4), Name: "周老师", Mobile: "13800000001", MainSubject: "数学思维", EmploymentType: "全职", WeeklyHours: 18, Campus: "明发校区", Status: "在职", CreatedAt: now, UpdatedAt: now},
 			{ID: 2, Name: "林老师", Mobile: "13800000002", MainSubject: "英语阅读", EmploymentType: "全职", WeeklyHours: 16, Campus: "百汇校区", Status: "在职", CreatedAt: now, UpdatedAt: now},
 			{ID: 3, Name: "陈老师", Mobile: "13800000003", MainSubject: "创意美术", EmploymentType: "兼职", WeeklyHours: 12, Campus: "明发校区", Status: "排课中", CreatedAt: now, UpdatedAt: now},
 		}
@@ -4315,6 +4349,8 @@ func teacherItemsFromDemo() []TeacherItem {
 	for _, item := range demo.Teachers() {
 		items = append(items, TeacherItem{
 			ID:             uint64(item.ID),
+			UserID:         demoTeacherUserID(item.ID),
+			UserName:       demoTeacherUserName(demoTeacherUserID(item.ID)),
 			Name:           item.Name,
 			Mobile:         item.Mobile,
 			Title:          item.Title,
@@ -4329,6 +4365,34 @@ func teacherItemsFromDemo() []TeacherItem {
 	return items
 }
 
+func (s *Service) teacherItemsFromDemoWithFilter(filter TeacherFilter) []TeacherItem {
+	items := teacherItemsFromDemo()
+	filteredItems := make([]TeacherItem, 0, len(items))
+	keyword := strings.TrimSpace(filter.Keyword)
+	status := strings.TrimSpace(filter.Status)
+	employmentType := strings.TrimSpace(filter.EmploymentType)
+	campus := strings.TrimSpace(filter.Campus)
+
+	for _, item := range items {
+		if keyword != "" && !matchesTeacherKeyword(item, keyword) {
+			continue
+		}
+		if status != "" && item.Status != status {
+			continue
+		}
+		if employmentType != "" && item.EmploymentType != employmentType {
+			continue
+		}
+		if campus != "" && item.Campus != campus {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
+}
+
 func teacherItemFromDemo(rawID string) (TeacherItem, bool, error) {
 	item, found := demo.FindTeacher(rawID)
 	if !found {
@@ -4336,6 +4400,8 @@ func teacherItemFromDemo(rawID string) (TeacherItem, bool, error) {
 	}
 	return TeacherItem{
 		ID:             uint64(item.ID),
+		UserID:         demoTeacherUserID(item.ID),
+		UserName:       demoTeacherUserName(demoTeacherUserID(item.ID)),
 		Name:           item.Name,
 		Mobile:         item.Mobile,
 		Title:          item.Title,
@@ -4346,6 +4412,76 @@ func teacherItemFromDemo(rawID string) (TeacherItem, bool, error) {
 		Status:         item.Status,
 		Remark:         item.Remark,
 	}, true, nil
+}
+
+func (s *Service) ensureTeacherUserBinding(userID uint64, excludeTeacherID uint64) error {
+	if s.db == nil || userID == 0 {
+		return nil
+	}
+
+	var user edumodel.User
+	findUserErr := s.db.Where("id = ?", userID).Take(&user).Error
+	if errors.Is(findUserErr, gorm.ErrRecordNotFound) {
+		return ErrTeacherUserNotFound
+	}
+	if findUserErr != nil {
+		return findUserErr
+	}
+
+	roleCodes, roleErr := s.userRoleCodes(userID)
+	if roleErr != nil {
+		return roleErr
+	}
+	if !containsString(roleCodes, "teacher") {
+		return ErrTeacherUserRoleInvalid
+	}
+
+	alreadyBound, boundErr := s.teacherUserBound(userID, excludeTeacherID)
+	if boundErr != nil {
+		return boundErr
+	}
+	if alreadyBound {
+		return ErrTeacherUserAlreadyBound
+	}
+
+	return nil
+}
+
+func (s *Service) userRoleCodes(userID uint64) ([]string, error) {
+	var rows []userRoleRecord
+	listErr := s.db.Table("user_roles AS ur").
+		Select("ur.user_id, ur.role_id, r.code AS role_code, r.name AS role_name").
+		Joins("JOIN roles AS r ON r.id = ur.role_id").
+		Where("ur.user_id = ?", userID).
+		Scan(&rows).Error
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	roleCodes := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.RoleCode) == "" {
+			continue
+		}
+		roleCodes = append(roleCodes, row.RoleCode)
+	}
+
+	return uniqueSortedStrings(roleCodes), nil
+}
+
+func (s *Service) teacherUserBound(userID uint64, excludeTeacherID uint64) (bool, error) {
+	query := s.db.Model(&edumodel.Teacher{}).Where("user_id = ?", userID)
+	if excludeTeacherID > 0 {
+		query = query.Where("id <> ?", excludeTeacherID)
+	}
+
+	var count int64
+	countErr := query.Count(&count).Error
+	if countErr != nil {
+		return false, countErr
+	}
+
+	return count > 0, nil
 }
 
 func courseItemsFromDemo(source []demo.Course) []CourseItem {
@@ -5063,6 +5199,58 @@ func guardianRelationFromName(name string) string {
 	}
 }
 
+func (s *Service) teacherQuery(filter TeacherFilter) *gorm.DB {
+	teacherQuery := s.db.Table("teachers AS t").
+		Select(`
+t.id,
+COALESCE(t.user_id, 0) AS user_id,
+COALESCE(u.display_name, '') AS user_name,
+t.name,
+COALESCE(t.mobile, '') AS mobile,
+COALESCE(t.title, '') AS title,
+COALESCE(t.main_subject, '') AS main_subject,
+COALESCE(t.employment_type, '') AS employment_type,
+COALESCE(t.weekly_hours, 0) AS weekly_hours,
+COALESCE(t.campus, '') AS campus,
+COALESCE(t.status, '') AS status,
+COALESCE(t.remark, '') AS remark
+`).
+		Joins("LEFT JOIN users AS u ON u.id = t.user_id")
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		teacherQuery = teacherQuery.Where(
+			`(t.name LIKE ? OR COALESCE(t.title, '') LIKE ? OR COALESCE(t.main_subject, '') LIKE ? OR COALESCE(t.mobile, '') LIKE ? OR COALESCE(t.campus, '') LIKE ? OR COALESCE(t.remark, '') LIKE ? OR COALESCE(u.display_name, '') LIKE ? OR COALESCE(u.username, '') LIKE ?)`,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		teacherQuery = teacherQuery.Where("t.status = ?", status)
+	}
+
+	employmentType := strings.TrimSpace(filter.EmploymentType)
+	if employmentType != "" {
+		teacherQuery = teacherQuery.Where("t.employment_type = ?", employmentType)
+	}
+
+	campus := strings.TrimSpace(filter.Campus)
+	if campus != "" {
+		teacherQuery = teacherQuery.Where("t.campus = ?", campus)
+	}
+
+	return teacherQuery
+}
+
 func (s *Service) studentQuery(filter StudentFilter) *gorm.DB {
 	studentQuery := s.db.Table("students AS s").
 		Select(`
@@ -5266,6 +5454,58 @@ func matchesClassKeyword(item ClassItem, keyword string) bool {
 		strings.Contains(item.CourseName, keyword) ||
 		strings.Contains(item.TeacherName, keyword) ||
 		strings.Contains(item.Campus, keyword)
+}
+
+func matchesTeacherKeyword(item TeacherItem, keyword string) bool {
+	return strings.Contains(item.Name, keyword) ||
+		strings.Contains(item.Title, keyword) ||
+		strings.Contains(item.MainSubject, keyword) ||
+		strings.Contains(item.Mobile, keyword) ||
+		strings.Contains(item.Campus, keyword) ||
+		strings.Contains(item.Remark, keyword) ||
+		strings.Contains(item.UserName, keyword)
+}
+
+func optionalUint64Pointer(value uint64) *uint64 {
+	if value == 0 {
+		return nil
+	}
+
+	pointerValue := value
+	return &pointerValue
+}
+
+func uint64Pointer(value uint64) *uint64 {
+	pointerValue := value
+	return &pointerValue
+}
+
+func demoTeacherUserID(teacherID int) uint64 {
+	switch teacherID {
+	case 1:
+		return 4
+	default:
+		return 0
+	}
+}
+
+func demoTeacherUserName(userID uint64) string {
+	switch userID {
+	case 4:
+		return "周老师"
+	default:
+		return ""
+	}
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+
+	return false
 }
 
 func parseOptionalDate(raw string) (*time.Time, error) {

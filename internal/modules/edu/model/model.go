@@ -4,6 +4,7 @@ import "time"
 
 type Teacher struct {
 	ID             uint64    `gorm:"primaryKey"`
+	UserID         *uint64   `gorm:"column:user_id;index"`
 	Name           string    `gorm:"size:64;not null"`
 	Mobile         string    `gorm:"size:32"`
 	Title          string    `gorm:"size:64"`
