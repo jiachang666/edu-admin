@@ -505,6 +505,14 @@ func (s *Service) Overview() (map[string]any, error) {
 		return nil, pendingActionErr
 	}
 
+	var draftHomeworkCount int64
+	draftHomeworkErr := s.db.Model(&edumodel.Homework{}).
+		Where("status = ?", "draft").
+		Count(&draftHomeworkCount).Error
+	if draftHomeworkErr != nil {
+		return nil, draftHomeworkErr
+	}
+
 	upcomingLessons, scheduleErr := s.Schedules()
 	if scheduleErr != nil {
 		return nil, scheduleErr
@@ -523,16 +531,41 @@ func (s *Service) Overview() (map[string]any, error) {
 		latestNotices = latestNotices[:5]
 	}
 
+	pendingItems := make([]map[string]any, 0, 3)
+	if todayPendingCheck > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "attendance",
+			"label": "待签到班级",
+			"count": todayPendingCheck,
+		})
+	}
+	if pendingActionCount > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "notice",
+			"label": "待发送通知",
+			"count": pendingActionCount,
+		})
+	}
+	if draftHomeworkCount > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "homework",
+			"label": "待补作业反馈",
+			"count": draftHomeworkCount,
+		})
+	}
+
 	return map[string]any{
-		"todayCourses":       todayCourses,
-		"todayPendingCheck":  todayPendingCheck,
-		"todayLeaveCount":    todayLeaveCount,
-		"todayAbsentCount":   todayAbsentCount,
-		"studentCount":       studentCount,
-		"classCount":         classCount,
-		"pendingActionCount": pendingActionCount,
-		"upcomingLessons":    upcomingLessons,
-		"latestNotices":      latestNotices,
+		"todayCourses":         todayCourses,
+		"todayPendingCheck":    todayPendingCheck,
+		"todayLeaveCount":      todayLeaveCount,
+		"todayAbsentCount":     todayAbsentCount,
+		"studentCount":         studentCount,
+		"classCount":           classCount,
+		"pendingActionCount":   pendingActionCount,
+		"pendingHomeworkCount": draftHomeworkCount,
+		"pendingItems":         pendingItems,
+		"upcomingLessons":      upcomingLessons,
+		"latestNotices":        latestNotices,
 	}, nil
 }
 
