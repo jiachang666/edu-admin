@@ -48,6 +48,19 @@ type CourseFilter struct {
 	Status   string
 }
 
+type StudentFilter struct {
+	Keyword string
+	Status  string
+	ClassID uint64
+}
+
+type ClassFilter struct {
+	Keyword   string
+	Status    string
+	CourseID  uint64
+	TeacherID uint64
+}
+
 type TeacherPayload struct {
 	Name           string
 	Mobile         string
@@ -929,39 +942,18 @@ func (s *Service) UpdateCourse(rawID string, input CoursePayload) (CourseItem, b
 }
 
 func (s *Service) Students() ([]StudentItem, error) {
+	return s.StudentsWithFilter(StudentFilter{})
+}
+
+func (s *Service) StudentsWithFilter(filter StudentFilter) ([]StudentItem, error) {
 	if s.db == nil {
-		return studentItemsFromDemo(), nil
+		return s.studentItemsFromDemoWithFilter(filter), nil
 	}
 
-	query := `
-SELECT
-  s.id,
-  s.name,
-  s.grade_name AS grade,
-  COALESCE(g.name, '') AS parent_name,
-  COALESCE(g.mobile, '') AS parent_mobile,
-  s.campus,
-  COALESCE(cs.class_id, 0) AS class_id,
-  COALESCE(c.name, '') AS class_name,
-  s.remaining_hours,
-  s.status
-FROM students AS s
-LEFT JOIN student_guardians AS g
-  ON g.student_id = s.id AND g.is_primary = 1
-LEFT JOIN (
-  SELECT student_id, MIN(class_id) AS class_id
-  FROM class_students
-  WHERE status = ?
-  GROUP BY student_id
-) AS cs
-  ON cs.student_id = s.id
-LEFT JOIN classes AS c
-  ON c.id = cs.class_id
-ORDER BY s.id ASC
-`
-
 	var items []StudentItem
-	listErr := s.db.Raw(query, activeClassStudentStatus).Scan(&items).Error
+	listErr := s.studentQuery(filter).
+		Order("s.id ASC").
+		Scan(&items).Error
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -1592,54 +1584,18 @@ ORDER BY c.id ASC
 }
 
 func (s *Service) Classes() ([]ClassItem, error) {
+	return s.ClassesWithFilter(ClassFilter{})
+}
+
+func (s *Service) ClassesWithFilter(filter ClassFilter) ([]ClassItem, error) {
 	if s.db == nil {
-		return classItemsFromDemo(demo.Classes()), nil
+		return s.classItemsFromDemoWithFilter(filter), nil
 	}
 
-	query := `
-SELECT
-  c.id,
-  c.course_id,
-  c.name,
-  COALESCE(co.name, '') AS course_name,
-  c.teacher_id,
-  COALESCE(t.name, '') AS teacher_name,
-  c.campus,
-  COUNT(cs.id) AS student_count,
-  c.capacity,
-  c.weekly_schedule,
-  COALESCE(DATE_FORMAT(c.start_date, '%Y-%m-%d'), '') AS start_date,
-  COALESCE(DATE_FORMAT(c.end_date, '%Y-%m-%d'), '') AS end_date,
-  c.status
-  ,
-  COALESCE(c.remark, '') AS remark
-FROM classes AS c
-LEFT JOIN courses AS co
-  ON co.id = c.course_id
-LEFT JOIN teachers AS t
-  ON t.id = c.teacher_id
-LEFT JOIN class_students AS cs
-  ON cs.class_id = c.id AND cs.status = ?
-GROUP BY
-  c.id,
-  c.course_id,
-  c.name,
-  co.name,
-  c.teacher_id,
-  t.name,
-  c.campus,
-  c.capacity,
-  c.weekly_schedule,
-  c.start_date,
-  c.end_date,
-  c.status
-  ,
-  c.remark
-ORDER BY c.id ASC
-`
-
 	var items []ClassItem
-	listErr := s.db.Raw(query, activeClassStudentStatus).Scan(&items).Error
+	listErr := s.classQuery(filter).
+		Order("c.id ASC").
+		Scan(&items).Error
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -4450,6 +4406,29 @@ func studentItemsFromDemo() []StudentItem {
 	return studentItemsFromDemoWithSlice(demo.Students())
 }
 
+func (s *Service) studentItemsFromDemoWithFilter(filter StudentFilter) []StudentItem {
+	items := studentItemsFromDemo()
+	filteredItems := make([]StudentItem, 0, len(items))
+	keyword := strings.TrimSpace(filter.Keyword)
+	status := strings.TrimSpace(filter.Status)
+
+	for _, item := range items {
+		if keyword != "" && !matchesStudentKeyword(item, keyword) {
+			continue
+		}
+		if status != "" && item.Status != status {
+			continue
+		}
+		if filter.ClassID > 0 && item.ClassID != filter.ClassID {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
+}
+
 func studentItemsFromDemoWithSlice(source []demo.Student) []StudentItem {
 	items := make([]StudentItem, 0, len(source))
 	for _, item := range source {
@@ -4530,6 +4509,32 @@ func classItemsFromDemo(source []demo.Class) []ClassItem {
 		})
 	}
 	return items
+}
+
+func (s *Service) classItemsFromDemoWithFilter(filter ClassFilter) []ClassItem {
+	items := classItemsFromDemo(demo.Classes())
+	filteredItems := make([]ClassItem, 0, len(items))
+	keyword := strings.TrimSpace(filter.Keyword)
+	status := strings.TrimSpace(filter.Status)
+
+	for _, item := range items {
+		if keyword != "" && !matchesClassKeyword(item, keyword) {
+			continue
+		}
+		if status != "" && item.Status != status {
+			continue
+		}
+		if filter.CourseID > 0 && item.CourseID != filter.CourseID {
+			continue
+		}
+		if filter.TeacherID > 0 && item.TeacherID != filter.TeacherID {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
 }
 
 func classItemFromDemo(rawID string) (ClassItem, bool, error) {
@@ -5058,6 +5063,129 @@ func guardianRelationFromName(name string) string {
 	}
 }
 
+func (s *Service) studentQuery(filter StudentFilter) *gorm.DB {
+	studentQuery := s.db.Table("students AS s").
+		Select(`
+s.id,
+s.name,
+s.grade_name AS grade,
+COALESCE(g.name, '') AS parent_name,
+COALESCE(g.mobile, '') AS parent_mobile,
+s.campus,
+COALESCE(cs.class_id, 0) AS class_id,
+COALESCE(c.name, '') AS class_name,
+s.remaining_hours,
+s.status
+`).
+		Joins("LEFT JOIN student_guardians AS g ON g.student_id = s.id AND g.is_primary = 1").
+		Joins(`
+LEFT JOIN (
+  SELECT student_id, MIN(class_id) AS class_id
+  FROM class_students
+  WHERE status = ?
+  GROUP BY student_id
+) AS cs ON cs.student_id = s.id
+`, activeClassStudentStatus).
+		Joins("LEFT JOIN classes AS c ON c.id = cs.class_id")
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		studentQuery = studentQuery.Where(
+			"(s.name LIKE ? OR s.grade_name LIKE ? OR COALESCE(g.name, '') LIKE ? OR COALESCE(g.mobile, '') LIKE ?)",
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		studentQuery = studentQuery.Where("s.status = ?", status)
+	}
+
+	if filter.ClassID > 0 {
+		studentQuery = studentQuery.Where(
+			`EXISTS (
+  SELECT 1
+  FROM class_students AS filter_cs
+  WHERE filter_cs.student_id = s.id
+    AND filter_cs.class_id = ?
+    AND filter_cs.status = ?
+)`,
+			filter.ClassID,
+			activeClassStudentStatus,
+		)
+	}
+
+	return studentQuery
+}
+
+func (s *Service) classQuery(filter ClassFilter) *gorm.DB {
+	classQuery := s.db.Table("classes AS c").
+		Select(`
+c.id,
+c.course_id,
+c.name,
+COALESCE(co.name, '') AS course_name,
+c.teacher_id,
+COALESCE(t.name, '') AS teacher_name,
+c.campus,
+COUNT(cs.id) AS student_count,
+c.capacity,
+c.weekly_schedule,
+COALESCE(DATE_FORMAT(c.start_date, '%Y-%m-%d'), '') AS start_date,
+COALESCE(DATE_FORMAT(c.end_date, '%Y-%m-%d'), '') AS end_date,
+c.status,
+COALESCE(c.remark, '') AS remark
+`).
+		Joins("LEFT JOIN courses AS co ON co.id = c.course_id").
+		Joins("LEFT JOIN teachers AS t ON t.id = c.teacher_id").
+		Joins("LEFT JOIN class_students AS cs ON cs.class_id = c.id AND cs.status = ?", activeClassStudentStatus)
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		classQuery = classQuery.Where(
+			"(c.name LIKE ? OR COALESCE(co.name, '') LIKE ? OR COALESCE(t.name, '') LIKE ? OR COALESCE(c.campus, '') LIKE ?)",
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		classQuery = classQuery.Where("c.status = ?", status)
+	}
+
+	if filter.CourseID > 0 {
+		classQuery = classQuery.Where("c.course_id = ?", filter.CourseID)
+	}
+
+	if filter.TeacherID > 0 {
+		classQuery = classQuery.Where("c.teacher_id = ?", filter.TeacherID)
+	}
+
+	return classQuery.Group(`
+c.id,
+c.course_id,
+c.name,
+co.name,
+c.teacher_id,
+t.name,
+c.campus,
+c.capacity,
+c.weekly_schedule,
+c.start_date,
+c.end_date,
+c.status,
+c.remark
+`)
+}
+
 func (s *Service) courseQuery(filter CourseFilter) *gorm.DB {
 	courseQuery := s.db.Table("courses AS c").
 		Select(`
@@ -5124,6 +5252,20 @@ func formatDateTime(value *time.Time) string {
 		return ""
 	}
 	return value.Format(dateTimeLayout)
+}
+
+func matchesStudentKeyword(item StudentItem, keyword string) bool {
+	return strings.Contains(item.Name, keyword) ||
+		strings.Contains(item.Grade, keyword) ||
+		strings.Contains(item.ParentName, keyword) ||
+		strings.Contains(item.ParentMobile, keyword)
+}
+
+func matchesClassKeyword(item ClassItem, keyword string) bool {
+	return strings.Contains(item.Name, keyword) ||
+		strings.Contains(item.CourseName, keyword) ||
+		strings.Contains(item.TeacherName, keyword) ||
+		strings.Contains(item.Campus, keyword)
 }
 
 func parseOptionalDate(raw string) (*time.Time, error) {

@@ -4,6 +4,7 @@ import (
 	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -51,7 +52,24 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	classes, classErr := h.service.Classes()
+	courseID, courseErr := parseClassUintParam(c.Query("courseId"))
+	if courseErr != nil {
+		response.Failed(c, 400, "course id is invalid")
+		return
+	}
+
+	teacherID, teacherErr := parseClassUintParam(c.Query("teacherId"))
+	if teacherErr != nil {
+		response.Failed(c, 400, "teacher id is invalid")
+		return
+	}
+
+	classes, classErr := h.service.ClassesWithFilter(eduservice.ClassFilter{
+		Keyword:   strings.TrimSpace(c.Query("keyword")),
+		Status:    strings.TrimSpace(c.Query("status")),
+		CourseID:  courseID,
+		TeacherID: teacherID,
+	})
 	if classErr != nil {
 		response.InternalServerError(c)
 		return
@@ -248,6 +266,15 @@ func bindClassPayload(c *gin.Context) (eduservice.ClassPayload, bool) {
 	}
 
 	return input, true
+}
+
+func parseClassUintParam(rawValue string) (uint64, error) {
+	trimmedValue := strings.TrimSpace(rawValue)
+	if trimmedValue == "" {
+		return 0, nil
+	}
+
+	return strconv.ParseUint(trimmedValue, 10, 64)
 }
 
 func validateClassPayload(input eduservice.ClassPayload) string {
