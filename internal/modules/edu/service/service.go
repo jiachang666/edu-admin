@@ -382,6 +382,13 @@ type HomeworkPayload struct {
 	Status         string `json:"status"`
 }
 
+type HomeworkFilter struct {
+	ClassID   uint64
+	TeacherID uint64
+	DateFrom  string
+	DateTo    string
+}
+
 type FeedbackItem struct {
 	ID             uint64 `json:"id"`
 	ScheduleID     uint64 `json:"scheduleId"`
@@ -401,6 +408,13 @@ type FeedbackPayload struct {
 	LearningStatus string `json:"learningStatus"`
 	NextSuggestion string `json:"nextSuggestion"`
 	ParentNotice   string `json:"parentNotice"`
+}
+
+type FeedbackFilter struct {
+	ClassID   uint64
+	TeacherID uint64
+	DateFrom  string
+	DateTo    string
 }
 
 func New(db *gorm.DB) *Service {
@@ -2806,13 +2820,12 @@ ORDER BY st.id ASC
 }
 
 func (s *Service) Homeworks() ([]HomeworkItem, error) {
-	if s.db == nil {
-		return homeworkItemsFromDemo(demo.Homeworks()), nil
-	}
+	return s.HomeworksWithFilter(HomeworkFilter{})
+}
 
-	schedules, scheduleErr := s.Schedules()
-	if scheduleErr != nil {
-		return nil, scheduleErr
+func (s *Service) HomeworksWithFilter(filter HomeworkFilter) ([]HomeworkItem, error) {
+	if s.db == nil {
+		return s.homeworkItemsFromDemoWithFilter(filter), nil
 	}
 
 	query := `
@@ -2837,6 +2850,28 @@ LEFT JOIN courses AS co
   ON co.id = s.course_id
 LEFT JOIN teachers AS t
   ON t.id = s.teacher_id
+WHERE 1 = 1
+`
+
+	args := make([]any, 0, 4)
+	if filter.ClassID > 0 {
+		query += " AND h.class_id = ?"
+		args = append(args, filter.ClassID)
+	}
+	if filter.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.TeacherID)
+	}
+	if strings.TrimSpace(filter.DateFrom) != "" {
+		query += " AND s.schedule_date >= ?"
+		args = append(args, strings.TrimSpace(filter.DateFrom))
+	}
+	if strings.TrimSpace(filter.DateTo) != "" {
+		query += " AND s.schedule_date <= ?"
+		args = append(args, strings.TrimSpace(filter.DateTo))
+	}
+
+	query += `
 ORDER BY s.schedule_date DESC, h.id DESC
 `
 
@@ -2855,14 +2890,14 @@ ORDER BY s.schedule_date DESC, h.id DESC
 	}
 
 	var rows []homeworkRow
-	listErr := s.db.Raw(query).Scan(&rows).Error
+	listErr := s.db.Raw(query, args...).Scan(&rows).Error
 	if listErr != nil {
 		return nil, listErr
 	}
 
-	itemMap := make(map[uint64]HomeworkItem, len(rows))
+	items := make([]HomeworkItem, 0, len(rows))
 	for _, row := range rows {
-		itemMap[row.ScheduleID] = HomeworkItem{
+		items = append(items, HomeworkItem{
 			ID:             row.ID,
 			ScheduleID:     row.ScheduleID,
 			ClassID:        row.ClassID,
@@ -2874,20 +2909,7 @@ ORDER BY s.schedule_date DESC, h.id DESC
 			Content:        row.Content,
 			SubmissionNote: row.SubmissionNote,
 			Status:         row.Status,
-		}
-	}
-
-	items := make([]HomeworkItem, 0, len(schedules))
-	for _, scheduleItem := range schedules {
-		if item, found := itemMap[scheduleItem.ID]; found {
-			items = append(items, item)
-			continue
-		}
-
-		fallbackItem, fallbackFound := homeworkItemFromDemoWithSchedule(scheduleItem)
-		if fallbackFound {
-			items = append(items, fallbackItem)
-		}
+		})
 	}
 
 	return items, nil
@@ -3071,13 +3093,12 @@ func (s *Service) SaveHomework(rawScheduleID string, payload HomeworkPayload) (H
 }
 
 func (s *Service) Feedbacks() ([]FeedbackItem, error) {
-	if s.db == nil {
-		return feedbackItemsFromDemo(demo.Feedbacks()), nil
-	}
+	return s.FeedbacksWithFilter(FeedbackFilter{})
+}
 
-	schedules, scheduleErr := s.Schedules()
-	if scheduleErr != nil {
-		return nil, scheduleErr
+func (s *Service) FeedbacksWithFilter(filter FeedbackFilter) ([]FeedbackItem, error) {
+	if s.db == nil {
+		return s.feedbackItemsFromDemoWithFilter(filter), nil
 	}
 
 	query := `
@@ -3102,6 +3123,28 @@ LEFT JOIN courses AS co
   ON co.id = s.course_id
 LEFT JOIN teachers AS t
   ON t.id = s.teacher_id
+WHERE 1 = 1
+`
+
+	args := make([]any, 0, 4)
+	if filter.ClassID > 0 {
+		query += " AND f.class_id = ?"
+		args = append(args, filter.ClassID)
+	}
+	if filter.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.TeacherID)
+	}
+	if strings.TrimSpace(filter.DateFrom) != "" {
+		query += " AND s.schedule_date >= ?"
+		args = append(args, strings.TrimSpace(filter.DateFrom))
+	}
+	if strings.TrimSpace(filter.DateTo) != "" {
+		query += " AND s.schedule_date <= ?"
+		args = append(args, strings.TrimSpace(filter.DateTo))
+	}
+
+	query += `
 ORDER BY s.schedule_date DESC, f.id DESC
 `
 
@@ -3120,14 +3163,14 @@ ORDER BY s.schedule_date DESC, f.id DESC
 	}
 
 	var rows []feedbackRow
-	listErr := s.db.Raw(query).Scan(&rows).Error
+	listErr := s.db.Raw(query, args...).Scan(&rows).Error
 	if listErr != nil {
 		return nil, listErr
 	}
 
-	itemMap := make(map[uint64]FeedbackItem, len(rows))
+	items := make([]FeedbackItem, 0, len(rows))
 	for _, row := range rows {
-		itemMap[row.ScheduleID] = FeedbackItem{
+		items = append(items, FeedbackItem{
 			ID:             row.ID,
 			ScheduleID:     row.ScheduleID,
 			ClassID:        row.ClassID,
@@ -3139,20 +3182,7 @@ ORDER BY s.schedule_date DESC, f.id DESC
 			LearningStatus: row.LearningStatus,
 			NextSuggestion: row.NextSuggestion,
 			ParentNotice:   row.ParentNotice,
-		}
-	}
-
-	items := make([]FeedbackItem, 0, len(schedules))
-	for _, scheduleItem := range schedules {
-		if item, found := itemMap[scheduleItem.ID]; found {
-			items = append(items, item)
-			continue
-		}
-
-		fallbackItem, fallbackFound := feedbackItemFromDemoWithSchedule(scheduleItem)
-		if fallbackFound {
-			items = append(items, fallbackItem)
-		}
+		})
 	}
 
 	return items, nil
@@ -4753,6 +4783,72 @@ func feedbackItemsFromDemo(source []demo.Feedback) []FeedbackItem {
 	}
 
 	return items
+}
+
+func (s *Service) homeworkItemsFromDemoWithFilter(filter HomeworkFilter) []HomeworkItem {
+	items := homeworkItemsFromDemo(demo.Homeworks())
+	if len(items) == 0 {
+		return items
+	}
+
+	filteredItems := make([]HomeworkItem, 0, len(items))
+	for _, item := range items {
+		if filter.ClassID > 0 && item.ClassID != filter.ClassID {
+			continue
+		}
+
+		scheduleItem, scheduleFound, scheduleErr := s.Schedule(fmt.Sprintf("%d", item.ScheduleID))
+		if scheduleErr != nil {
+			continue
+		}
+
+		if filter.TeacherID > 0 {
+			if !scheduleFound || scheduleItem.TeacherID != filter.TeacherID {
+				continue
+			}
+		}
+
+		if !matchesDateRange(item.LessonDate, filter.DateFrom, filter.DateTo) {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
+}
+
+func (s *Service) feedbackItemsFromDemoWithFilter(filter FeedbackFilter) []FeedbackItem {
+	items := feedbackItemsFromDemo(demo.Feedbacks())
+	if len(items) == 0 {
+		return items
+	}
+
+	filteredItems := make([]FeedbackItem, 0, len(items))
+	for _, item := range items {
+		if filter.ClassID > 0 && item.ClassID != filter.ClassID {
+			continue
+		}
+
+		scheduleItem, scheduleFound, scheduleErr := s.Schedule(fmt.Sprintf("%d", item.ScheduleID))
+		if scheduleErr != nil {
+			continue
+		}
+
+		if filter.TeacherID > 0 {
+			if !scheduleFound || scheduleItem.TeacherID != filter.TeacherID {
+				continue
+			}
+		}
+
+		if !matchesDateRange(item.LessonDate, filter.DateFrom, filter.DateTo) {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
 }
 
 func feedbackItemFromDemo(rawScheduleID string) (FeedbackItem, bool, error) {
