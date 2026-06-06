@@ -4,6 +4,7 @@ import (
 	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -49,12 +50,16 @@ func (h *Handler) list(c *gin.Context) {
 	}
 
 	dateFilter := c.Query("date")
+	dateFromFilter := strings.TrimSpace(c.Query("dateFrom"))
+	dateToFilter := strings.TrimSpace(c.Query("dateTo"))
 	statusFilter := c.Query("status")
-	if mode == "records" || classID > 0 || studentID > 0 || dateFilter != "" || statusFilter != "" {
+	if mode == "records" || classID > 0 || studentID > 0 || dateFilter != "" || dateFromFilter != "" || dateToFilter != "" || statusFilter != "" {
 		items, itemErr := h.service.AttendanceRecords(eduservice.AttendanceRecordFilter{
 			ClassID:   classID,
 			StudentID: studentID,
 			Date:      dateFilter,
+			DateFrom:  dateFromFilter,
+			DateTo:    dateToFilter,
 			Status:    statusFilter,
 			Scope:     scope,
 		})
@@ -82,24 +87,44 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	var payload eduservice.AttendanceSavePayload
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	recordItem, found, recordErr := h.service.AttendanceRecord(c.Param("id"))
+	if recordErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found || !h.service.ScopeAllowsTeacher(scope, recordItem.TeacherID) {
+		response.Failed(c, 404, "attendance record not found")
+		return
+	}
+
+	var payload eduservice.AttendanceRecordUpdatePayload
 	bindErr := c.ShouldBindJSON(&payload)
 	if bindErr != nil {
 		response.Failed(c, 400, "invalid attendance payload")
 		return
 	}
 
-	saved, saveErr := h.service.SaveAttendance(c.Param("id"), payload, c.GetString("current_user_name"), currentOperator(c))
-	if saveErr != nil {
+	updatedItem, updateFound, updateErr := h.service.UpdateAttendanceRecord(c.Param("id"), payload, currentOperator(c))
+	if errors.Is(updateErr, eduservice.ErrInvalidAttendanceStatus) {
+		response.Failed(c, 400, "attendance status is invalid")
+		return
+	}
+	if updateErr != nil {
 		response.InternalServerError(c)
 		return
 	}
-	if !saved {
-		response.Failed(c, 404, "attendance session not found")
+	if !updateFound {
+		response.Failed(c, 404, "attendance record not found")
 		return
 	}
 
-	response.Success(c, gin.H{"saved": true})
+	response.Success(c, updatedItem)
 }
 
 func parseUintParam(rawValue string) (uint64, error) {

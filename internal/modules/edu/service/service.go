@@ -20,6 +20,10 @@ const (
 	dateTimeLayout           = "2006-01-02 15:04"
 )
 
+var ErrInvalidAttendanceStatus = errors.New("invalid attendance status")
+
+const attendanceRecordSyntheticFactor uint64 = 1000000
+
 type Service struct {
 	db *gorm.DB
 }
@@ -342,6 +346,7 @@ type NoticeFilter struct {
 }
 
 type AttendanceItem struct {
+	RecordID     uint64 `json:"recordId"`
 	StudentID    uint64 `json:"studentId"`
 	StudentName  string `json:"studentName"`
 	Grade        string `json:"grade"`
@@ -374,16 +379,20 @@ type AttendanceRecordFilter struct {
 	ClassID   uint64
 	StudentID uint64
 	Date      string
+	DateFrom  string
+	DateTo    string
 	Status    string
 	Scope     Scope
 }
 
 type AttendanceRecordItem struct {
+	ID           uint64 `json:"id"`
 	ScheduleID   uint64 `json:"scheduleId"`
 	ClassID      uint64 `json:"classId"`
 	ClassName    string `json:"className"`
 	StudentID    uint64 `json:"studentId"`
 	StudentName  string `json:"studentName"`
+	TeacherID    uint64 `json:"teacherId"`
 	TeacherName  string `json:"teacherName"`
 	LessonDate   string `json:"lessonDate"`
 	LessonTime   string `json:"lessonTime"`
@@ -402,6 +411,11 @@ type AttendanceSaveItem struct {
 
 type AttendanceSavePayload struct {
 	Items []AttendanceSaveItem `json:"items"`
+}
+
+type AttendanceRecordUpdatePayload struct {
+	Status string `json:"status"`
+	Remark string `json:"remark"`
 }
 
 type HomeworkItem struct {
@@ -3101,7 +3115,7 @@ func (s *Service) recentAttendanceSessions(items []ScheduleItem, limit int) ([]A
 
 func (s *Service) Attendance(rawScheduleID string) ([]AttendanceItem, error) {
 	if s.db == nil {
-		return attendanceItemsFromDemo(demo.Attendance(rawScheduleID)), nil
+		return attendanceItemsFromDemo(rawScheduleID, demo.Attendance(rawScheduleID)), nil
 	}
 
 	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
@@ -3173,6 +3187,9 @@ func (s *Service) AttendanceRecords(filter AttendanceRecordFilter) ([]Attendance
 		if filterDate != "" && scheduleItem.LessonDate != filterDate {
 			continue
 		}
+		if !matchesDateRange(scheduleItem.LessonDate, filter.DateFrom, filter.DateTo) {
+			continue
+		}
 
 		attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
 		if attendanceErr != nil {
@@ -3187,25 +3204,307 @@ func (s *Service) AttendanceRecords(filter AttendanceRecordFilter) ([]Attendance
 				continue
 			}
 
-			items = append(items, AttendanceRecordItem{
-				ScheduleID:   scheduleItem.ID,
-				ClassID:      scheduleItem.ClassID,
-				ClassName:    scheduleItem.ClassName,
-				StudentID:    attendanceItem.StudentID,
-				StudentName:  attendanceItem.StudentName,
-				TeacherName:  scheduleItem.TeacherName,
-				LessonDate:   scheduleItem.LessonDate,
-				LessonTime:   scheduleItem.LessonTime,
-				Status:       attendanceItem.Status,
-				Remark:       attendanceItem.Remark,
-				UpdatedBy:    attendanceItem.UpdatedBy,
-				UpdatedAt:    attendanceItem.UpdatedAt,
-				ParentMobile: attendanceItem.ParentMobile,
-			})
+			items = append(items, attendanceRecordItemFromAttendanceItem(scheduleItem, attendanceItem))
 		}
 	}
 
 	return items, nil
+}
+
+func (s *Service) AttendanceRecord(rawRecordID string) (AttendanceRecordItem, bool, error) {
+	if s.db == nil {
+		recordID, parseErr := strconv.ParseUint(strings.TrimSpace(rawRecordID), 10, 64)
+		if parseErr != nil || recordID == 0 {
+			return AttendanceRecordItem{}, false, nil
+		}
+
+		scheduleID, studentID, parsed := attendanceRecordPartsFromID(recordID)
+		if !parsed {
+			return AttendanceRecordItem{}, false, nil
+		}
+
+		return s.attendanceRecordByScheduleStudent(scheduleID, studentID)
+	}
+
+	query := `
+SELECT
+  ar.id,
+  ar.schedule_id,
+  s.class_id,
+  COALESCE(c.name, '') AS class_name,
+  ar.student_id,
+  COALESCE(st.name, '') AS student_name,
+  COALESCE(s.teacher_id, 0) AS teacher_id,
+  COALESCE(t.name, '') AS teacher_name,
+  COALESCE(DATE_FORMAT(s.schedule_date, '%Y-%m-%d'), '') AS lesson_date,
+  COALESCE(s.start_time, '') AS start_time,
+  COALESCE(s.end_time, '') AS end_time,
+  COALESCE(ar.status, '') AS status,
+  COALESCE(ar.remark, '') AS remark,
+  COALESCE(ar.updated_by, '') AS updated_by,
+  ar.checked_at AS checked_at,
+  COALESCE(g.mobile, '') AS parent_mobile
+FROM attendance_records AS ar
+LEFT JOIN class_schedules AS s
+  ON s.id = ar.schedule_id
+LEFT JOIN classes AS c
+  ON c.id = s.class_id
+LEFT JOIN teachers AS t
+  ON t.id = s.teacher_id
+LEFT JOIN students AS st
+  ON st.id = ar.student_id
+LEFT JOIN student_guardians AS g
+  ON g.student_id = st.id AND g.is_primary = 1
+WHERE ar.id = ?
+LIMIT 1
+`
+
+	type attendanceRecordRow struct {
+		ID           uint64     `gorm:"column:id"`
+		ScheduleID   uint64     `gorm:"column:schedule_id"`
+		ClassID      uint64     `gorm:"column:class_id"`
+		ClassName    string     `gorm:"column:class_name"`
+		StudentID    uint64     `gorm:"column:student_id"`
+		StudentName  string     `gorm:"column:student_name"`
+		TeacherID    uint64     `gorm:"column:teacher_id"`
+		TeacherName  string     `gorm:"column:teacher_name"`
+		LessonDate   string     `gorm:"column:lesson_date"`
+		StartTime    string     `gorm:"column:start_time"`
+		EndTime      string     `gorm:"column:end_time"`
+		Status       string     `gorm:"column:status"`
+		Remark       string     `gorm:"column:remark"`
+		UpdatedBy    string     `gorm:"column:updated_by"`
+		CheckedAt    *time.Time `gorm:"column:checked_at"`
+		ParentMobile string     `gorm:"column:parent_mobile"`
+	}
+
+	var row attendanceRecordRow
+	findErr := s.db.Raw(query, rawRecordID).Scan(&row).Error
+	if findErr != nil {
+		return AttendanceRecordItem{}, false, findErr
+	}
+	if row.ID > 0 {
+		return AttendanceRecordItem{
+			ID:           row.ID,
+			ScheduleID:   row.ScheduleID,
+			ClassID:      row.ClassID,
+			ClassName:    row.ClassName,
+			StudentID:    row.StudentID,
+			StudentName:  row.StudentName,
+			TeacherID:    row.TeacherID,
+			TeacherName:  row.TeacherName,
+			LessonDate:   row.LessonDate,
+			LessonTime:   formatLessonTime(row.StartTime, row.EndTime),
+			Status:       normalizeAttendanceItemStatus(row.Status),
+			Remark:       row.Remark,
+			UpdatedBy:    row.UpdatedBy,
+			UpdatedAt:    formatDateTime(row.CheckedAt),
+			ParentMobile: row.ParentMobile,
+		}, true, nil
+	}
+
+	recordID, parseErr := strconv.ParseUint(strings.TrimSpace(rawRecordID), 10, 64)
+	if parseErr != nil || recordID == 0 {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	scheduleID, studentID, parsed := attendanceRecordPartsFromID(recordID)
+	if !parsed {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	return s.attendanceRecordByScheduleStudent(scheduleID, studentID)
+}
+
+func (s *Service) UpdateAttendanceRecord(rawRecordID string, payload AttendanceRecordUpdatePayload, operator Operator) (AttendanceRecordItem, bool, error) {
+	nextStatus := normalizeAttendanceItemStatus(payload.Status)
+	if nextStatus == "" {
+		return AttendanceRecordItem{}, false, ErrInvalidAttendanceStatus
+	}
+
+	recordItem, found, recordErr := s.AttendanceRecord(rawRecordID)
+	if recordErr != nil {
+		return AttendanceRecordItem{}, false, recordErr
+	}
+	if !found {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	trimmedRemark := strings.TrimSpace(payload.Remark)
+	now := time.Now()
+	editorName := operationDisplayName(operator, "")
+
+	if s.db == nil {
+		scheduleItem, scheduleFound, scheduleErr := s.Schedule(fmt.Sprintf("%d", recordItem.ScheduleID))
+		if scheduleErr != nil {
+			return AttendanceRecordItem{}, false, scheduleErr
+		}
+		if !scheduleFound {
+			return AttendanceRecordItem{}, false, nil
+		}
+
+		currentItems, currentErr := s.attendanceFromSchedule(scheduleItem)
+		if currentErr != nil {
+			return AttendanceRecordItem{}, false, currentErr
+		}
+
+		demoItems := make([]demo.AttendanceItem, 0, len(currentItems))
+		itemFound := false
+		for _, item := range currentItems {
+			nextItem := item
+			if item.RecordID == recordItem.ID {
+				nextItem.Status = nextStatus
+				nextItem.Remark = trimmedRemark
+				nextItem.UpdatedBy = editorName
+				nextItem.UpdatedAt = now.Format(dateTimeLayout)
+				itemFound = true
+			}
+
+			demoItems = append(demoItems, demo.AttendanceItem{
+				StudentID:    int(nextItem.StudentID),
+				StudentName:  nextItem.StudentName,
+				Grade:        nextItem.Grade,
+				ParentMobile: nextItem.ParentMobile,
+				Status:       nextItem.Status,
+				Remark:       nextItem.Remark,
+				UpdatedBy:    nextItem.UpdatedBy,
+				UpdatedAt:    nextItem.UpdatedAt,
+			})
+		}
+		if !itemFound {
+			return AttendanceRecordItem{}, false, nil
+		}
+		if !demo.SaveAttendance(fmt.Sprintf("%d", recordItem.ScheduleID), demoItems) {
+			return AttendanceRecordItem{}, false, nil
+		}
+
+		return s.attendanceRecordByScheduleStudent(recordItem.ScheduleID, recordItem.StudentID)
+	}
+
+	scheduleItem, scheduleFound, scheduleErr := s.Schedule(fmt.Sprintf("%d", recordItem.ScheduleID))
+	if scheduleErr != nil {
+		return AttendanceRecordItem{}, false, scheduleErr
+	}
+	if !scheduleFound {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	currentItems, currentErr := s.attendanceFromSchedule(scheduleItem)
+	if currentErr != nil {
+		return AttendanceRecordItem{}, false, currentErr
+	}
+
+	itemFound := false
+	for index := range currentItems {
+		if currentItems[index].RecordID != recordItem.ID {
+			continue
+		}
+
+		currentItems[index].Status = nextStatus
+		currentItems[index].Remark = trimmedRemark
+		currentItems[index].UpdatedBy = editorName
+		currentItems[index].UpdatedAt = now.Format(dateTimeLayout)
+		itemFound = true
+		break
+	}
+	if !itemFound {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	_, _, _, pendingCount := summarizeAttendanceItems(currentItems)
+	sessionStatus := nextSavedAttendanceStatus(pendingCount)
+	targetRecordID := recordItem.ID
+
+	transactionErr := s.db.Transaction(func(tx *gorm.DB) error {
+		record := edumodel.AttendanceRecord{
+			ScheduleID: recordItem.ScheduleID,
+			StudentID:  recordItem.StudentID,
+			Status:     nextStatus,
+			Remark:     trimmedRemark,
+			CheckedAt:  &now,
+			UpdatedBy:  editorName,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+
+		saveErr := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "schedule_id"},
+				{Name: "student_id"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"status",
+				"remark",
+				"checked_at",
+				"updated_by",
+				"updated_at",
+			}),
+		}).Create(&record).Error
+		if saveErr != nil {
+			return saveErr
+		}
+		if record.ID > 0 {
+			targetRecordID = record.ID
+		}
+
+		sessionUpdateErr := tx.Model(&edumodel.ClassSchedule{}).
+			Where("id = ?", recordItem.ScheduleID).
+			Updates(map[string]any{
+				"status":     sessionStatus,
+				"updated_at": now,
+			}).Error
+		if sessionUpdateErr != nil {
+			return sessionUpdateErr
+		}
+
+		content := fmt.Sprintf(
+			"更正班级 %s 在 %s %s 的学员 %s 签到结果为 %s。",
+			recordItem.ClassName,
+			recordItem.LessonDate,
+			recordItem.LessonTime,
+			recordItem.StudentName,
+			nextStatus,
+		)
+
+		return s.recordBusinessOperationTx(tx, operator, "attendance", "update_record", "attendance_record", targetRecordID, content)
+	})
+	if errors.Is(transactionErr, gorm.ErrRecordNotFound) {
+		return AttendanceRecordItem{}, false, nil
+	}
+	if transactionErr != nil {
+		return AttendanceRecordItem{}, false, transactionErr
+	}
+
+	return s.attendanceRecordByScheduleStudent(recordItem.ScheduleID, recordItem.StudentID)
+}
+
+func (s *Service) attendanceRecordByScheduleStudent(scheduleID uint64, studentID uint64) (AttendanceRecordItem, bool, error) {
+	if scheduleID == 0 || studentID == 0 {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	scheduleItem, found, scheduleErr := s.Schedule(fmt.Sprintf("%d", scheduleID))
+	if scheduleErr != nil {
+		return AttendanceRecordItem{}, false, scheduleErr
+	}
+	if !found {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+	if attendanceErr != nil {
+		return AttendanceRecordItem{}, false, attendanceErr
+	}
+
+	for _, attendanceItem := range attendanceItems {
+		if attendanceItem.StudentID != studentID {
+			continue
+		}
+
+		return attendanceRecordItemFromAttendanceItem(scheduleItem, attendanceItem), true, nil
+	}
+
+	return AttendanceRecordItem{}, false, nil
 }
 
 func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePayload, updatedBy string, operator Operator) (bool, error) {
@@ -3349,11 +3648,12 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 
 func (s *Service) attendanceFromSchedule(scheduleItem ScheduleItem) ([]AttendanceItem, error) {
 	if s.db == nil {
-		return attendanceItemsFromDemo(demo.Attendance(fmt.Sprintf("%d", scheduleItem.ID))), nil
+		return attendanceItemsFromDemo(fmt.Sprintf("%d", scheduleItem.ID), demo.Attendance(fmt.Sprintf("%d", scheduleItem.ID))), nil
 	}
 
 	query := `
 SELECT
+  COALESCE(ar.id, 0) AS attendance_record_id,
   st.id AS student_id,
   st.name AS student_name,
   st.grade_name AS grade,
@@ -3374,14 +3674,15 @@ ORDER BY st.id ASC
 `
 
 	type attendanceRow struct {
-		StudentID        uint64     `gorm:"column:student_id"`
-		StudentName      string     `gorm:"column:student_name"`
-		Grade            string     `gorm:"column:grade"`
-		ParentMobile     string     `gorm:"column:parent_mobile"`
-		AttendanceStatus string     `gorm:"column:attendance_status"`
-		AttendanceRemark string     `gorm:"column:attendance_remark"`
-		UpdatedBy        string     `gorm:"column:updated_by"`
-		CheckedAt        *time.Time `gorm:"column:checked_at"`
+		AttendanceRecordID uint64     `gorm:"column:attendance_record_id"`
+		StudentID          uint64     `gorm:"column:student_id"`
+		StudentName        string     `gorm:"column:student_name"`
+		Grade              string     `gorm:"column:grade"`
+		ParentMobile       string     `gorm:"column:parent_mobile"`
+		AttendanceStatus   string     `gorm:"column:attendance_status"`
+		AttendanceRemark   string     `gorm:"column:attendance_remark"`
+		UpdatedBy          string     `gorm:"column:updated_by"`
+		CheckedAt          *time.Time `gorm:"column:checked_at"`
 	}
 
 	var rows []attendanceRow
@@ -3397,7 +3698,13 @@ ORDER BY st.id ASC
 			status = defaultAttendanceItemStatus(scheduleItem.AttendanceStatus, index, len(rows))
 		}
 
+		recordID := row.AttendanceRecordID
+		if recordID == 0 {
+			recordID = attendanceRecordIDFromValues(scheduleItem.ID, row.StudentID)
+		}
+
 		items = append(items, AttendanceItem{
+			RecordID:     recordID,
 			StudentID:    row.StudentID,
 			StudentName:  row.StudentName,
 			Grade:        row.Grade,
@@ -5761,10 +6068,12 @@ func noticeTargetItemsFromDemo(source []demo.NoticeTarget) []NoticeTargetItem {
 	return items
 }
 
-func attendanceItemsFromDemo(source []demo.AttendanceItem) []AttendanceItem {
+func attendanceItemsFromDemo(rawScheduleID string, source []demo.AttendanceItem) []AttendanceItem {
 	items := make([]AttendanceItem, 0, len(source))
 	for _, item := range source {
+		recordID := attendanceRecordIDFromParts(rawScheduleID, uint64(item.StudentID))
 		items = append(items, AttendanceItem{
+			RecordID:     recordID,
 			StudentID:    uint64(item.StudentID),
 			StudentName:  item.StudentName,
 			Grade:        item.Grade,
@@ -5776,6 +6085,57 @@ func attendanceItemsFromDemo(source []demo.AttendanceItem) []AttendanceItem {
 		})
 	}
 	return items
+}
+
+func attendanceRecordIDFromParts(rawScheduleID string, studentID uint64) uint64 {
+	scheduleID, parseErr := strconv.ParseUint(strings.TrimSpace(rawScheduleID), 10, 64)
+	if parseErr != nil || scheduleID == 0 || studentID == 0 {
+		return 0
+	}
+
+	return attendanceRecordIDFromValues(scheduleID, studentID)
+}
+
+func attendanceRecordIDFromValues(scheduleID uint64, studentID uint64) uint64 {
+	if scheduleID == 0 || studentID == 0 {
+		return 0
+	}
+
+	return scheduleID*attendanceRecordSyntheticFactor + studentID
+}
+
+func attendanceRecordPartsFromID(recordID uint64) (uint64, uint64, bool) {
+	if recordID < attendanceRecordSyntheticFactor {
+		return 0, 0, false
+	}
+
+	scheduleID := recordID / attendanceRecordSyntheticFactor
+	studentID := recordID % attendanceRecordSyntheticFactor
+	if scheduleID == 0 || studentID == 0 {
+		return 0, 0, false
+	}
+
+	return scheduleID, studentID, true
+}
+
+func attendanceRecordItemFromAttendanceItem(scheduleItem ScheduleItem, attendanceItem AttendanceItem) AttendanceRecordItem {
+	return AttendanceRecordItem{
+		ID:           attendanceItem.RecordID,
+		ScheduleID:   scheduleItem.ID,
+		ClassID:      scheduleItem.ClassID,
+		ClassName:    scheduleItem.ClassName,
+		StudentID:    attendanceItem.StudentID,
+		StudentName:  attendanceItem.StudentName,
+		TeacherID:    scheduleItem.TeacherID,
+		TeacherName:  scheduleItem.TeacherName,
+		LessonDate:   scheduleItem.LessonDate,
+		LessonTime:   scheduleItem.LessonTime,
+		Status:       attendanceItem.Status,
+		Remark:       attendanceItem.Remark,
+		UpdatedBy:    attendanceItem.UpdatedBy,
+		UpdatedAt:    attendanceItem.UpdatedAt,
+		ParentMobile: attendanceItem.ParentMobile,
+	}
 }
 
 func homeworkItemsFromDemo(source []demo.Homework) []HomeworkItem {
