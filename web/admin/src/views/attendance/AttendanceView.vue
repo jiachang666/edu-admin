@@ -4,11 +4,17 @@ import { ElMessage } from "element-plus";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
+  fetchAttendanceRecordList,
   fetchAttendanceSessionList,
+  fetchClassList,
   fetchScheduleAttendance,
+  fetchStudentList,
   saveScheduleAttendance,
+  type AttendanceRecord,
   type AttendanceEntry,
   type AttendanceSession,
+  type SchoolClass,
+  type Student,
 } from "../../api/education";
 
 const route = useRoute();
@@ -18,16 +24,28 @@ const sessionLoading = ref(false);
 const detailLoading = ref(false);
 const saving = ref(false);
 const sessions = ref<AttendanceSession[]>([]);
+const historyLoading = ref(false);
+const historyRecords = ref<AttendanceRecord[]>([]);
 const attendanceItems = ref<AttendanceEntry[]>([]);
 const selectedSessionId = ref<number | null>(null);
+const classOptions = ref<SchoolClass[]>([]);
+const studentOptions = ref<Student[]>([]);
 
 const filters = reactive({
   keyword: "",
   status: "",
 });
 
+const historyFilters = reactive({
+  classId: null as number | null,
+  studentId: null as number | null,
+  date: "",
+  status: "",
+});
+
 const sessionStatusOptions = ["待签到", "已完成", "待上课"];
 const entryStatusOptions = ["待确认", "已到", "请假", "缺席", "补签"];
+const historyStatusOptions = ["已到", "请假", "缺席", "补签", "待确认"];
 
 const filteredSessions = computed(() => {
   const keyword = filters.keyword.trim().toLowerCase();
@@ -182,6 +200,37 @@ async function loadSessions() {
   }
 }
 
+async function loadHistoryRecords() {
+  historyLoading.value = true;
+
+  try {
+    const result = await fetchAttendanceRecordList({
+      mode: "records",
+      classId: historyFilters.classId ?? undefined,
+      studentId: historyFilters.studentId ?? undefined,
+      date: historyFilters.date || undefined,
+      status: historyFilters.status || undefined,
+    });
+    historyRecords.value = result.list;
+  } catch (error) {
+    console.error(error);
+    ElMessage.error("签到记录加载失败");
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function loadFilterOptions() {
+  try {
+    const [classResult, studentResult] = await Promise.all([fetchClassList(), fetchStudentList()]);
+    classOptions.value = classResult.list;
+    studentOptions.value = studentResult.list;
+  } catch (error) {
+    console.error(error);
+    ElMessage.error("签到筛选项加载失败");
+  }
+}
+
 async function handleSelectSession(sessionId: number) {
   await ensureSelectedSession(sessionId);
 }
@@ -189,6 +238,14 @@ async function handleSelectSession(sessionId: number) {
 function handleResetFilters() {
   filters.keyword = "";
   filters.status = "";
+}
+
+function handleResetHistoryFilters() {
+  historyFilters.classId = null;
+  historyFilters.studentId = null;
+  historyFilters.date = "";
+  historyFilters.status = "";
+  void loadHistoryRecords();
 }
 
 function handleMarkAllPresent() {
@@ -224,6 +281,7 @@ async function handleSaveAttendance() {
     });
     ElMessage.success("签到结果已保存");
     await loadSessions();
+    await loadHistoryRecords();
   } catch (error) {
     console.error(error);
     ElMessage.error("签到结果保存失败");
@@ -247,6 +305,10 @@ function sessionActionLabel(item: AttendanceSession) {
   return "回看记录";
 }
 
+function openHistoryRecord(record: AttendanceRecord) {
+  void ensureSelectedSession(record.scheduleId);
+}
+
 watch(
   () => route.query.scheduleId,
   (value) => {
@@ -261,6 +323,8 @@ watch(
 
 onMounted(() => {
   void loadSessions();
+  void loadHistoryRecords();
+  void loadFilterOptions();
 });
 </script>
 
@@ -477,34 +541,117 @@ onMounted(() => {
       <div class="page-header">
         <div>
           <h2>签到记录回看</h2>
-          <p class="soft-text">把已经点过名的场次放在下面，方便教务和负责人回头查。</p>
+          <p class="soft-text">按班级、学员和日期回看历史签到，也能快速跳回对应场次继续更正。</p>
         </div>
         <div class="section-note">历史记录</div>
       </div>
 
+      <div class="page-toolbar">
+        <div class="toolbar-filters">
+          <el-select
+            v-model="historyFilters.classId"
+            class="toolbar-field"
+            clearable
+            filterable
+            placeholder="按班级查看"
+          >
+            <el-option
+              v-for="item in classOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+          <el-select
+            v-model="historyFilters.studentId"
+            class="toolbar-field"
+            clearable
+            filterable
+            placeholder="按学员查看"
+          >
+            <el-option
+              v-for="item in studentOptions"
+              :key="item.id"
+              :label="`${item.name} · ${item.grade}`"
+              :value="item.id"
+            />
+          </el-select>
+          <el-date-picker
+            v-model="historyFilters.date"
+            class="toolbar-field"
+            clearable
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="按日期筛选"
+          />
+          <el-select
+            v-model="historyFilters.status"
+            class="toolbar-field"
+            clearable
+            placeholder="异常状态"
+          >
+            <el-option
+              v-for="item in historyStatusOptions"
+              :key="item"
+              :label="item"
+              :value="item"
+            />
+          </el-select>
+        </div>
+
+        <div class="toolbar-actions">
+          <el-button plain @click="handleResetHistoryFilters">重置筛选</el-button>
+          <el-button plain @click="loadHistoryRecords">
+            <el-icon><RefreshRight /></el-icon>
+            <span>刷新记录</span>
+          </el-button>
+        </div>
+      </div>
+
       <div class="data-table-shell">
-        <el-table :data="historySessions" stripe>
+        <el-table v-loading="historyLoading" :data="historyRecords" stripe>
           <el-table-column label="日期" prop="lessonDate" width="120" />
+          <el-table-column label="时间" prop="lessonTime" width="120" />
           <el-table-column label="班级" prop="className" min-width="180" />
+          <el-table-column label="学员" prop="studentName" width="120" />
           <el-table-column label="老师" prop="teacherName" width="120" />
-          <el-table-column label="已到" prop="presentCount" width="90" />
-          <el-table-column label="请假" prop="leaveCount" width="90" />
-          <el-table-column label="缺席" prop="absentCount" width="90" />
+          <el-table-column label="家长电话" prop="parentMobile" width="140" />
           <el-table-column label="状态" width="120">
             <template #default="{ row }">
-              <el-tag :type="row.attendanceStatus === '已完成' ? 'success' : 'warning'">
-                {{ row.attendanceStatus }}
+              <el-tag
+                :type="
+                  row.status === '已到' || row.status === '补签'
+                    ? 'success'
+                    : row.status === '请假'
+                      ? 'warning'
+                      : row.status === '缺席'
+                        ? 'danger'
+                        : 'info'
+                "
+              >
+                {{ row.status }}
               </el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="备注" min-width="180">
+            <template #default="{ row }">
+              <span class="muted-cell">{{ row.remark || "暂无备注" }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作人" prop="updatedBy" width="120" />
+          <el-table-column label="最后更新时间" prop="updatedAt" width="180" />
           <el-table-column label="操作" width="120" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="handleSelectSession(row.id)">
-                查看详情
+              <el-button link type="primary" @click="openHistoryRecord(row)">
+                去更正
               </el-button>
             </template>
           </el-table-column>
         </el-table>
+      </div>
+
+      <div v-if="historyRecords.length === 0" class="soft-empty teacher-detail-empty">
+        当前筛选条件下还没有签到记录。
       </div>
     </section>
   </div>

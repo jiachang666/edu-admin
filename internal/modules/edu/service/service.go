@@ -292,6 +292,8 @@ type AttendanceItem struct {
 	ParentMobile string `json:"parentMobile"`
 	Status       string `json:"status"`
 	Remark       string `json:"remark"`
+	UpdatedBy    string `json:"updatedBy"`
+	UpdatedAt    string `json:"updatedAt"`
 }
 
 type AttendanceSessionItem struct {
@@ -310,6 +312,29 @@ type AttendanceSessionItem struct {
 	LeaveCount       int    `json:"leaveCount"`
 	AbsentCount      int    `json:"absentCount"`
 	PendingCount     int    `json:"pendingCount"`
+}
+
+type AttendanceRecordFilter struct {
+	ClassID   uint64
+	StudentID uint64
+	Date      string
+	Status    string
+}
+
+type AttendanceRecordItem struct {
+	ScheduleID   uint64 `json:"scheduleId"`
+	ClassID      uint64 `json:"classId"`
+	ClassName    string `json:"className"`
+	StudentID    uint64 `json:"studentId"`
+	StudentName  string `json:"studentName"`
+	TeacherName  string `json:"teacherName"`
+	LessonDate   string `json:"lessonDate"`
+	LessonTime   string `json:"lessonTime"`
+	Status       string `json:"status"`
+	Remark       string `json:"remark"`
+	UpdatedBy    string `json:"updatedBy"`
+	UpdatedAt    string `json:"updatedAt"`
+	ParentMobile string `json:"parentMobile"`
 }
 
 type AttendanceSaveItem struct {
@@ -2444,7 +2469,59 @@ func (s *Service) AttendanceSessions() ([]AttendanceSessionItem, error) {
 	return items, nil
 }
 
-func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePayload) (bool, error) {
+func (s *Service) AttendanceRecords(filter AttendanceRecordFilter) ([]AttendanceRecordItem, error) {
+	schedules, scheduleErr := s.Schedules()
+	if scheduleErr != nil {
+		return nil, scheduleErr
+	}
+
+	filteredStatus := normalizeAttendanceItemStatus(filter.Status)
+	filterDate := strings.TrimSpace(filter.Date)
+
+	items := make([]AttendanceRecordItem, 0)
+	for _, scheduleItem := range schedules {
+		if filter.ClassID > 0 && scheduleItem.ClassID != filter.ClassID {
+			continue
+		}
+		if filterDate != "" && scheduleItem.LessonDate != filterDate {
+			continue
+		}
+
+		attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+		if attendanceErr != nil {
+			return nil, attendanceErr
+		}
+
+		for _, attendanceItem := range attendanceItems {
+			if filter.StudentID > 0 && attendanceItem.StudentID != filter.StudentID {
+				continue
+			}
+			if filteredStatus != "" && attendanceItem.Status != filteredStatus {
+				continue
+			}
+
+			items = append(items, AttendanceRecordItem{
+				ScheduleID:   scheduleItem.ID,
+				ClassID:      scheduleItem.ClassID,
+				ClassName:    scheduleItem.ClassName,
+				StudentID:    attendanceItem.StudentID,
+				StudentName:  attendanceItem.StudentName,
+				TeacherName:  scheduleItem.TeacherName,
+				LessonDate:   scheduleItem.LessonDate,
+				LessonTime:   scheduleItem.LessonTime,
+				Status:       attendanceItem.Status,
+				Remark:       attendanceItem.Remark,
+				UpdatedBy:    attendanceItem.UpdatedBy,
+				UpdatedAt:    attendanceItem.UpdatedAt,
+				ParentMobile: attendanceItem.ParentMobile,
+			})
+		}
+	}
+
+	return items, nil
+}
+
+func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePayload, updatedBy string) (bool, error) {
 	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
 	if scheduleErr != nil {
 		return false, scheduleErr
@@ -2488,6 +2565,7 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 
 	_, _, _, pendingCount := summarizeAttendanceItems(finalItems)
 	nextStatus := nextSavedAttendanceStatus(pendingCount)
+	now := time.Now()
 
 	if s.db == nil {
 		demoItems := make([]demo.AttendanceItem, 0, len(finalItems))
@@ -2499,6 +2577,8 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 				ParentMobile: item.ParentMobile,
 				Status:       item.Status,
 				Remark:       item.Remark,
+				UpdatedBy:    strings.TrimSpace(updatedBy),
+				UpdatedAt:    now.Format(dateTimeLayout),
 			})
 		}
 
@@ -2510,8 +2590,11 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 		return false, nil
 	}
 
-	now := time.Now()
 	records := make([]edumodel.AttendanceRecord, 0, len(finalItems))
+	editorName := strings.TrimSpace(updatedBy)
+	if editorName == "" {
+		editorName = "系统管理员"
+	}
 	for _, item := range finalItems {
 		checkedAt := now
 		records = append(records, edumodel.AttendanceRecord{
@@ -2520,7 +2603,7 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 			Status:     item.Status,
 			Remark:     item.Remark,
 			CheckedAt:  &checkedAt,
-			UpdatedBy:  "System Admin",
+			UpdatedBy:  editorName,
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		})
@@ -2577,7 +2660,9 @@ SELECT
   st.grade_name AS grade,
   COALESCE(g.mobile, '') AS parent_mobile,
   COALESCE(ar.status, '') AS attendance_status,
-  COALESCE(ar.remark, '') AS attendance_remark
+  COALESCE(ar.remark, '') AS attendance_remark,
+  COALESCE(ar.updated_by, '') AS updated_by,
+  ar.checked_at AS checked_at
 FROM class_students AS cs
 JOIN students AS st
   ON st.id = cs.student_id
@@ -2590,12 +2675,14 @@ ORDER BY st.id ASC
 `
 
 	type attendanceRow struct {
-		StudentID        uint64 `gorm:"column:student_id"`
-		StudentName      string `gorm:"column:student_name"`
-		Grade            string `gorm:"column:grade"`
-		ParentMobile     string `gorm:"column:parent_mobile"`
-		AttendanceStatus string `gorm:"column:attendance_status"`
-		AttendanceRemark string `gorm:"column:attendance_remark"`
+		StudentID        uint64     `gorm:"column:student_id"`
+		StudentName      string     `gorm:"column:student_name"`
+		Grade            string     `gorm:"column:grade"`
+		ParentMobile     string     `gorm:"column:parent_mobile"`
+		AttendanceStatus string     `gorm:"column:attendance_status"`
+		AttendanceRemark string     `gorm:"column:attendance_remark"`
+		UpdatedBy        string     `gorm:"column:updated_by"`
+		CheckedAt        *time.Time `gorm:"column:checked_at"`
 	}
 
 	var rows []attendanceRow
@@ -2618,6 +2705,8 @@ ORDER BY st.id ASC
 			ParentMobile: row.ParentMobile,
 			Status:       status,
 			Remark:       row.AttendanceRemark,
+			UpdatedBy:    row.UpdatedBy,
+			UpdatedAt:    formatDateTime(row.CheckedAt),
 		})
 	}
 
@@ -3840,6 +3929,8 @@ func attendanceItemsFromDemo(source []demo.AttendanceItem) []AttendanceItem {
 			ParentMobile: item.ParentMobile,
 			Status:       item.Status,
 			Remark:       item.Remark,
+			UpdatedBy:    item.UpdatedBy,
+			UpdatedAt:    item.UpdatedAt,
 		})
 	}
 	return items
