@@ -58,7 +58,13 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	schedules, scheduleErr := h.service.Schedules()
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	schedules, scheduleErr := h.service.SchedulesWithScope(scope)
 	if scheduleErr != nil {
 		response.InternalServerError(c)
 		return
@@ -97,12 +103,22 @@ func (h *Handler) detail(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	schedule, found, scheduleErr := h.service.ScheduleDetail(c.Param("id"))
 	if scheduleErr != nil {
 		response.InternalServerError(c)
 		return
 	}
 	if !found {
+		response.Failed(c, 404, "schedule not found")
+		return
+	}
+	if !h.service.ScopeAllowsTeacher(scope, schedule.Schedule.TeacherID) {
 		response.Failed(c, 404, "schedule not found")
 		return
 	}
@@ -212,12 +228,22 @@ func (h *Handler) attendance(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	scheduleItem, found, scheduleErr := h.service.Schedule(c.Param("id"))
 	if scheduleErr != nil {
 		response.InternalServerError(c)
 		return
 	}
 	if !found {
+		response.Failed(c, 404, "schedule not found")
+		return
+	}
+	if !h.service.ScopeAllowsTeacher(scope, scheduleItem.TeacherID) {
 		response.Failed(c, 404, "schedule not found")
 		return
 	}
@@ -234,6 +260,22 @@ func (h *Handler) attendance(c *gin.Context) {
 func (h *Handler) saveAttendance(c *gin.Context) {
 	if !permission.HasFromContext(c, "attendance:manage") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	scheduleItem, found, scheduleErr := h.service.Schedule(c.Param("id"))
+	if scheduleErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found || !h.service.ScopeAllowsTeacher(scope, scheduleItem.TeacherID) {
+		response.Failed(c, 404, "schedule not found")
 		return
 	}
 
@@ -263,6 +305,22 @@ func (h *Handler) homework(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	scheduleItem, found, scheduleErr := h.service.Schedule(c.Param("id"))
+	if scheduleErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found || !h.service.ScopeAllowsTeacher(scope, scheduleItem.TeacherID) {
+		response.Failed(c, 404, "schedule not found")
+		return
+	}
+
 	item, found, itemErr := h.service.Homework(c.Param("id"))
 	if itemErr != nil {
 		response.InternalServerError(c)
@@ -279,6 +337,22 @@ func (h *Handler) homework(c *gin.Context) {
 func (h *Handler) saveHomework(c *gin.Context) {
 	if !permission.HasFromContext(c, "homeworks:manage") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	scheduleItem, found, scheduleErr := h.service.Schedule(c.Param("id"))
+	if scheduleErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found || !h.service.ScopeAllowsTeacher(scope, scheduleItem.TeacherID) {
+		response.Failed(c, 404, "schedule not found")
 		return
 	}
 
@@ -308,6 +382,22 @@ func (h *Handler) feedback(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	scheduleItem, found, scheduleErr := h.service.Schedule(c.Param("id"))
+	if scheduleErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found || !h.service.ScopeAllowsTeacher(scope, scheduleItem.TeacherID) {
+		response.Failed(c, 404, "schedule not found")
+		return
+	}
+
 	item, found, itemErr := h.service.Feedback(c.Param("id"))
 	if itemErr != nil {
 		response.InternalServerError(c)
@@ -324,6 +414,22 @@ func (h *Handler) feedback(c *gin.Context) {
 func (h *Handler) saveFeedback(c *gin.Context) {
 	if !permission.HasFromContext(c, "homeworks:manage") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	scheduleItem, found, scheduleErr := h.service.Schedule(c.Param("id"))
+	if scheduleErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found || !h.service.ScopeAllowsTeacher(scope, scheduleItem.TeacherID) {
+		response.Failed(c, 404, "schedule not found")
 		return
 	}
 

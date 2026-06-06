@@ -13,3 +13,11 @@ func New(eduService *eduservice.Service) *Service {
 func (s *Service) Overview() (map[string]any, error) {
 	return s.eduService.Overview()
 }
+
+func (s *Service) OverviewWithScope(scope eduservice.Scope) (map[string]any, error) {
+	return s.eduService.OverviewWithScope(scope)
+}
+
+func (s *Service) ScopeForUser(userID uint64, primaryRole string) (eduservice.Scope, error) {
+	return s.eduService.ScopeForUser(userID, primaryRole)
+}

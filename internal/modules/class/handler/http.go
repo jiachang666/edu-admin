@@ -52,6 +52,12 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	courseID, courseErr := parseClassUintParam(c.Query("courseId"))
 	if courseErr != nil {
 		response.Failed(c, 400, "course id is invalid")
@@ -69,6 +75,7 @@ func (h *Handler) list(c *gin.Context) {
 		Status:    strings.TrimSpace(c.Query("status")),
 		CourseID:  courseID,
 		TeacherID: teacherID,
+		Scope:     scope,
 	})
 	if classErr != nil {
 		response.InternalServerError(c)
@@ -104,12 +111,22 @@ func (h *Handler) detail(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	classDetail, found, classErr := h.service.ClassDetail(c.Param("id"))
 	if classErr != nil {
 		response.InternalServerError(c)
 		return
 	}
 	if !found {
+		response.Failed(c, 404, "class not found")
+		return
+	}
+	if !h.service.ScopeAllowsTeacher(scope, classDetail.Class.TeacherID) {
 		response.Failed(c, 404, "class not found")
 		return
 	}
@@ -144,6 +161,22 @@ func (h *Handler) update(c *gin.Context) {
 func (h *Handler) students(c *gin.Context) {
 	if !permission.HasFromContext(c, "classes:view") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	classItem, found, classErr := h.service.Class(c.Param("id"))
+	if classErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found || !h.service.ScopeAllowsTeacher(scope, classItem.TeacherID) {
+		response.Failed(c, 404, "class not found")
 		return
 	}
 
@@ -226,6 +259,22 @@ func (h *Handler) removeStudent(c *gin.Context) {
 func (h *Handler) upcomingSchedules(c *gin.Context) {
 	if !permission.HasFromContext(c, "classes:view") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	classItem, found, classErr := h.service.Class(c.Param("id"))
+	if classErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found || !h.service.ScopeAllowsTeacher(scope, classItem.TeacherID) {
+		response.Failed(c, 404, "class not found")
 		return
 	}
 
