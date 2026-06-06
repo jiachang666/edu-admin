@@ -96,7 +96,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	createdItem, createErr := h.service.CreateClass(input)
+	createdItem, createErr := h.service.CreateClass(input, currentOperator(c))
 	if createErr != nil {
 		response.InternalServerError(c)
 		return
@@ -145,7 +145,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.UpdateClass(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.UpdateClass(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -218,7 +218,7 @@ func (h *Handler) addStudents(c *gin.Context) {
 		return
 	}
 
-	added, addErr := h.service.AddStudentsToClass(c.Param("id"), studentIDs)
+	added, addErr := h.service.AddStudentsToClass(c.Param("id"), studentIDs, currentOperator(c))
 	if addErr != nil {
 		response.InternalServerError(c)
 		return
@@ -243,7 +243,7 @@ func (h *Handler) removeStudent(c *gin.Context) {
 		return
 	}
 
-	removed, removeErr := h.service.RemoveStudentFromClass(c.Param("id"), studentID)
+	removed, removeErr := h.service.RemoveStudentFromClass(c.Param("id"), studentID, currentOperator(c))
 	if removeErr != nil {
 		response.InternalServerError(c)
 		return
@@ -324,6 +324,13 @@ func parseClassUintParam(rawValue string) (uint64, error) {
 	}
 
 	return strconv.ParseUint(trimmedValue, 10, 64)
+}
+
+func currentOperator(c *gin.Context) eduservice.Operator {
+	return eduservice.Operator{
+		UserID:      c.GetUint64("current_user_id"),
+		DisplayName: c.GetString("current_user_name"),
+	}
 }
 
 func validateClassPayload(input eduservice.ClassPayload) string {

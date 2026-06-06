@@ -85,7 +85,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	createdItem, createErr := h.service.CreateNotice(input)
+	createdItem, createErr := h.service.CreateNotice(input, currentOperator(c))
 	if createErr != nil {
 		response.InternalServerError(c)
 		return
@@ -139,7 +139,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.UpdateNotice(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.UpdateNotice(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -158,7 +158,7 @@ func (h *Handler) send(c *gin.Context) {
 		return
 	}
 
-	sentItem, found, sendErr := h.service.SendNotice(c.Param("id"))
+	sentItem, found, sendErr := h.service.SendNotice(c.Param("id"), currentOperator(c))
 	if sendErr != nil {
 		response.InternalServerError(c)
 		return
@@ -286,4 +286,11 @@ func deduplicateNoticeStudentIDs(source []uint64) []uint64 {
 	}
 
 	return items
+}
+
+func currentOperator(c *gin.Context) eduservice.Operator {
+	return eduservice.Operator{
+		UserID:      c.GetUint64("current_user_id"),
+		DisplayName: c.GetString("current_user_name"),
+	}
 }
