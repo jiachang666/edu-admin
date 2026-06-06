@@ -6012,6 +6012,18 @@ func (s *Service) NoticePayloadAccessible(input NoticePayload, scope Scope) (boo
 	return hasScopedTarget, nil
 }
 
+func (s *Service) StudentIDsAccessible(studentIDs []uint64, scope Scope) (bool, error) {
+	uniqueStudentIDs := uniqueUint64s(studentIDs)
+	if len(uniqueStudentIDs) == 0 || !scope.RestrictToSelf {
+		return true, nil
+	}
+	if scope.TeacherID == 0 {
+		return false, nil
+	}
+
+	return s.allStudentsBelongToTeacher(uniqueStudentIDs, scope.TeacherID)
+}
+
 func (s *Service) anyStudentBelongsToTeacher(studentIDs []uint64, teacherID uint64) (bool, error) {
 	if teacherID == 0 || len(studentIDs) == 0 {
 		return false, nil
