@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	dashboardservice "edu-admin/internal/modules/dashboard/service"
 
@@ -20,6 +21,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) overview(c *gin.Context) {
+	if !permission.HasFromContext(c, "dashboard:view") {
+		response.Forbidden(c)
+		return
+	}
+
 	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
 	if scopeErr != nil {
 		response.InternalServerError(c)
