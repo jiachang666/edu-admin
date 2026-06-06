@@ -100,6 +100,12 @@ func (h *Handler) detail(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	notice, found, noticeErr := h.service.Notice(c.Param("id"))
 	if noticeErr != nil {
 		response.InternalServerError(c)
@@ -107,6 +113,15 @@ func (h *Handler) detail(c *gin.Context) {
 	}
 	if !found {
 		response.Success(c, gin.H{"id": c.Param("id")})
+		return
+	}
+	accessible, accessErr := h.service.NoticeAccessible(c.Param("id"), scope)
+	if accessErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !accessible {
+		response.Failed(c, 404, "notice not found")
 		return
 	}
 
@@ -159,6 +174,22 @@ func (h *Handler) send(c *gin.Context) {
 func (h *Handler) targets(c *gin.Context) {
 	if !permission.HasFromContext(c, "notices:view") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	accessible, accessErr := h.service.NoticeAccessible(c.Param("id"), scope)
+	if accessErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !accessible {
+		response.Failed(c, 404, "notice not found")
 		return
 	}
 

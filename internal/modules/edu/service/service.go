@@ -224,6 +224,7 @@ type ClassDetail struct {
 	UpcomingSchedules []ScheduleItem          `json:"upcomingSchedules"`
 	RecentAttendance  []AttendanceSessionItem `json:"recentAttendance"`
 	RecentHomeworks   []HomeworkItem          `json:"recentHomeworks"`
+	RecentFeedbacks   []FeedbackItem          `json:"recentFeedbacks"`
 	RecentNotices     []NoticeItem            `json:"recentNotices"`
 }
 
@@ -1898,6 +1899,8 @@ ORDER BY s.id ASC
 }
 
 func (s *Service) ClassDetail(rawClassID string) (ClassDetail, bool, error) {
+	const recentItemLimit = 4
+
 	classItem, found, classErr := s.Class(rawClassID)
 	if classErr != nil {
 		return ClassDetail{}, false, classErr
@@ -1911,60 +1914,43 @@ func (s *Service) ClassDetail(rawClassID string) (ClassDetail, bool, error) {
 		return ClassDetail{}, false, studentErr
 	}
 
-	upcomingSchedules, scheduleErr := s.UpcomingSchedules(rawClassID)
+	classSchedules, scheduleErr := s.classSchedules(rawClassID)
 	if scheduleErr != nil {
 		return ClassDetail{}, false, scheduleErr
 	}
 
-	recentAttendance := make([]AttendanceSessionItem, 0, len(upcomingSchedules))
-	for _, scheduleItem := range upcomingSchedules {
-		attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
-		if attendanceErr != nil {
-			return ClassDetail{}, false, attendanceErr
-		}
-
-		presentCount, leaveCount, absentCount, pendingCount := summarizeAttendanceItems(attendanceItems)
-		recentAttendance = append(recentAttendance, AttendanceSessionItem{
-			ID:               scheduleItem.ID,
-			ClassID:          scheduleItem.ClassID,
-			ClassName:        scheduleItem.ClassName,
-			CourseName:       scheduleItem.CourseName,
-			TeacherName:      scheduleItem.TeacherName,
-			Campus:           scheduleItem.Campus,
-			Classroom:        scheduleItem.Classroom,
-			LessonDate:       scheduleItem.LessonDate,
-			LessonTime:       scheduleItem.LessonTime,
-			AttendanceStatus: sessionAttendanceStatus(scheduleItem.AttendanceStatus, pendingCount),
-			StudentCount:     len(attendanceItems),
-			PresentCount:     presentCount,
-			LeaveCount:       leaveCount,
-			AbsentCount:      absentCount,
-			PendingCount:     pendingCount,
-		})
+	upcomingSchedules, upcomingErr := s.UpcomingSchedules(rawClassID)
+	if upcomingErr != nil {
+		return ClassDetail{}, false, upcomingErr
 	}
 
-	homeworks, homeworkErr := s.Homeworks()
+	recentAttendance, attendanceErr := s.recentAttendanceSessions(classSchedules, recentItemLimit)
+	if attendanceErr != nil {
+		return ClassDetail{}, false, attendanceErr
+	}
+
+	recentHomeworks, homeworkErr := s.HomeworksWithFilter(HomeworkFilter{ClassID: classItem.ID})
 	if homeworkErr != nil {
 		return ClassDetail{}, false, homeworkErr
 	}
-
-	recentHomeworks := make([]HomeworkItem, 0, len(homeworks))
-	for _, item := range homeworks {
-		if item.ClassID == classItem.ID {
-			recentHomeworks = append(recentHomeworks, item)
-		}
+	if len(recentHomeworks) > recentItemLimit {
+		recentHomeworks = recentHomeworks[:recentItemLimit]
 	}
 
-	notices, noticeErr := s.Notices()
+	recentFeedbacks, feedbackErr := s.FeedbacksWithFilter(FeedbackFilter{ClassID: classItem.ID})
+	if feedbackErr != nil {
+		return ClassDetail{}, false, feedbackErr
+	}
+	if len(recentFeedbacks) > recentItemLimit {
+		recentFeedbacks = recentFeedbacks[:recentItemLimit]
+	}
+
+	recentNotices, noticeErr := s.NoticesWithFilter(NoticeFilter{ClassID: classItem.ID})
 	if noticeErr != nil {
 		return ClassDetail{}, false, noticeErr
 	}
-
-	recentNotices := make([]NoticeItem, 0, len(notices))
-	for _, item := range notices {
-		if item.RelatedClassID == classItem.ID {
-			recentNotices = append(recentNotices, item)
-		}
+	if len(recentNotices) > recentItemLimit {
+		recentNotices = recentNotices[:recentItemLimit]
 	}
 
 	return ClassDetail{
@@ -1973,6 +1959,7 @@ func (s *Service) ClassDetail(rawClassID string) (ClassDetail, bool, error) {
 		UpcomingSchedules: upcomingSchedules,
 		RecentAttendance:  recentAttendance,
 		RecentHomeworks:   recentHomeworks,
+		RecentFeedbacks:   recentFeedbacks,
 		RecentNotices:     recentNotices,
 	}, true, nil
 }
@@ -2638,6 +2625,26 @@ func (s *Service) classCourseID(classID uint64) (uint64, bool, error) {
 }
 
 func (s *Service) UpcomingSchedules(rawClassID string) ([]ScheduleItem, error) {
+	items, listErr := s.classSchedules(rawClassID)
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	today := startOfDay(time.Now())
+	filteredItems := make([]ScheduleItem, 0, len(items))
+	for _, item := range items {
+		lessonDate, parseErr := time.ParseInLocation(dateLayout, item.LessonDate, time.Local)
+		if parseErr == nil && startOfDay(lessonDate).Before(today) {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems, nil
+}
+
+func (s *Service) classSchedules(rawClassID string) ([]ScheduleItem, error) {
 	items, listErr := s.Schedules()
 	if listErr != nil {
 		return nil, listErr
@@ -2645,12 +2652,59 @@ func (s *Service) UpcomingSchedules(rawClassID string) ([]ScheduleItem, error) {
 
 	filteredItems := make([]ScheduleItem, 0, len(items))
 	for _, item := range items {
-		if fmt.Sprintf("%d", item.ClassID) == rawClassID {
-			filteredItems = append(filteredItems, item)
+		if fmt.Sprintf("%d", item.ClassID) != rawClassID {
+			continue
 		}
+
+		filteredItems = append(filteredItems, item)
 	}
 
 	return filteredItems, nil
+}
+
+func (s *Service) recentAttendanceSessions(items []ScheduleItem, limit int) ([]AttendanceSessionItem, error) {
+	if len(items) == 0 || limit <= 0 {
+		return []AttendanceSessionItem{}, nil
+	}
+
+	today := startOfDay(time.Now())
+	recentItems := make([]AttendanceSessionItem, 0, limit)
+	for index := len(items) - 1; index >= 0; index-- {
+		scheduleItem := items[index]
+		lessonDate, parseErr := time.ParseInLocation(dateLayout, scheduleItem.LessonDate, time.Local)
+		if parseErr == nil && startOfDay(lessonDate).After(today) {
+			continue
+		}
+
+		attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+		if attendanceErr != nil {
+			return nil, attendanceErr
+		}
+
+		presentCount, leaveCount, absentCount, pendingCount := summarizeAttendanceItems(attendanceItems)
+		recentItems = append(recentItems, AttendanceSessionItem{
+			ID:               scheduleItem.ID,
+			ClassID:          scheduleItem.ClassID,
+			ClassName:        scheduleItem.ClassName,
+			CourseName:       scheduleItem.CourseName,
+			TeacherName:      scheduleItem.TeacherName,
+			Campus:           scheduleItem.Campus,
+			Classroom:        scheduleItem.Classroom,
+			LessonDate:       scheduleItem.LessonDate,
+			LessonTime:       scheduleItem.LessonTime,
+			AttendanceStatus: sessionAttendanceStatus(scheduleItem.AttendanceStatus, pendingCount),
+			StudentCount:     len(attendanceItems),
+			PresentCount:     presentCount,
+			LeaveCount:       leaveCount,
+			AbsentCount:      absentCount,
+			PendingCount:     pendingCount,
+		})
+		if len(recentItems) >= limit {
+			break
+		}
+	}
+
+	return recentItems, nil
 }
 
 func (s *Service) Attendance(rawScheduleID string) ([]AttendanceItem, error) {
@@ -3544,17 +3598,7 @@ WHERE 1 = 1
 		query += " AND COALESCE(related_class_id, 0) = ?"
 		queryArgs = append(queryArgs, filter.ClassID)
 	}
-	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
-		query += ` AND (
-COALESCE(related_schedule_id, 0) IN (
-  SELECT id FROM class_schedules WHERE teacher_id = ?
-)
-OR COALESCE(related_class_id, 0) IN (
-  SELECT id FROM classes WHERE teacher_id = ?
-)
-)`
-		queryArgs = append(queryArgs, filter.Scope.TeacherID, filter.Scope.TeacherID)
-	}
+	query, queryArgs = appendNoticeScopeFilter(query, queryArgs, filter.Scope)
 
 	filterDate := strings.TrimSpace(filter.Date)
 	filterStatus := strings.TrimSpace(filter.Status)
@@ -3702,6 +3746,46 @@ LIMIT 1
 		PublishAt:         publishAt,
 		Author:            row.Author,
 	}, true, nil
+}
+
+func (s *Service) NoticeAccessible(rawNoticeID string, scope Scope) (bool, error) {
+	if !scope.RestrictToSelf || scope.TeacherID == 0 {
+		return true, nil
+	}
+
+	if s.db == nil {
+		noticeItem, found, noticeErr := s.Notice(rawNoticeID)
+		if noticeErr != nil {
+			return false, noticeErr
+		}
+		if !found {
+			return false, nil
+		}
+
+		return s.noticeMatchesScope(scope, noticeItem)
+	}
+
+	query := `
+SELECT id
+FROM notices
+WHERE id = ?
+`
+
+	queryArgs := []any{rawNoticeID}
+	query, queryArgs = appendNoticeScopeFilter(query, queryArgs, scope)
+	query += " LIMIT 1"
+
+	type noticeAccessRow struct {
+		ID uint64 `gorm:"column:id"`
+	}
+
+	var row noticeAccessRow
+	findErr := s.db.Raw(query, queryArgs...).Scan(&row).Error
+	if findErr != nil {
+		return false, findErr
+	}
+
+	return row.ID > 0, nil
 }
 
 func (s *Service) NoticeTargets(rawNoticeID string) ([]NoticeTargetItem, error) {
@@ -4894,11 +4978,133 @@ func (s *Service) noticeItemsFromDemoWithFilter(filter NoticeFilter) []NoticeIte
 		if !matchesDateRange(noticeDate, filter.DateFrom, filter.DateTo) {
 			continue
 		}
+		scopeMatched, scopeErr := s.noticeMatchesScope(filter.Scope, item)
+		if scopeErr != nil || !scopeMatched {
+			continue
+		}
 
 		filteredItems = append(filteredItems, item)
 	}
 
 	return filteredItems
+}
+
+func appendNoticeScopeFilter(query string, queryArgs []any, scope Scope) (string, []any) {
+	if !scope.RestrictToSelf || scope.TeacherID == 0 {
+		return query, queryArgs
+	}
+
+	query += ` AND (
+COALESCE(related_schedule_id, 0) IN (
+  SELECT id FROM class_schedules WHERE teacher_id = ?
+)
+OR COALESCE(related_class_id, 0) IN (
+  SELECT id FROM classes WHERE teacher_id = ?
+)
+OR id IN (
+  SELECT nt.notice_id
+  FROM notice_targets AS nt
+  JOIN classes AS c
+    ON c.id = nt.class_id
+  WHERE nt.target_type = 'class'
+    AND c.teacher_id = ?
+)
+OR id IN (
+  SELECT nt.notice_id
+  FROM notice_targets AS nt
+  JOIN class_students AS cs
+    ON cs.student_id = nt.student_id
+   AND cs.status = ?
+  JOIN classes AS c
+    ON c.id = cs.class_id
+  WHERE nt.target_type = 'student'
+    AND c.teacher_id = ?
+)
+)`
+
+	queryArgs = append(
+		queryArgs,
+		scope.TeacherID,
+		scope.TeacherID,
+		scope.TeacherID,
+		activeClassStudentStatus,
+		scope.TeacherID,
+	)
+
+	return query, queryArgs
+}
+
+func (s *Service) noticeMatchesScope(scope Scope, noticeItem NoticeItem) (bool, error) {
+	if !scope.RestrictToSelf {
+		return true, nil
+	}
+	if scope.TeacherID == 0 {
+		return false, nil
+	}
+
+	if noticeItem.RelatedScheduleID > 0 {
+		scheduleItem, scheduleFound, scheduleErr := s.Schedule(fmt.Sprintf("%d", noticeItem.RelatedScheduleID))
+		if scheduleErr != nil {
+			return false, scheduleErr
+		}
+		if scheduleFound && scheduleItem.TeacherID == scope.TeacherID {
+			return true, nil
+		}
+	}
+
+	if noticeItem.RelatedClassID > 0 {
+		classItem, classFound, classErr := s.Class(fmt.Sprintf("%d", noticeItem.RelatedClassID))
+		if classErr != nil {
+			return false, classErr
+		}
+		if classFound && classItem.TeacherID == scope.TeacherID {
+			return true, nil
+		}
+	}
+
+	return s.anyStudentBelongsToTeacher(noticeItem.StudentIDs, scope.TeacherID)
+}
+
+func (s *Service) anyStudentBelongsToTeacher(studentIDs []uint64, teacherID uint64) (bool, error) {
+	if teacherID == 0 || len(studentIDs) == 0 {
+		return false, nil
+	}
+
+	if s.db == nil {
+		for _, studentID := range studentIDs {
+			classes := demo.StudentClasses(fmt.Sprintf("%d", studentID))
+			for _, classItem := range classes {
+				if uint64(classItem.TeacherID) == teacherID {
+					return true, nil
+				}
+			}
+		}
+
+		return false, nil
+	}
+
+	query := `
+SELECT cs.student_id
+FROM class_students AS cs
+JOIN classes AS c
+  ON c.id = cs.class_id
+WHERE cs.student_id IN ?
+  AND cs.status = ?
+  AND c.teacher_id = ?
+LIMIT 1
+`
+
+	type studentScopeRow struct {
+		StudentID uint64 `gorm:"column:student_id"`
+	}
+
+	var row studentScopeRow
+	findErr := s.db.Raw(query, studentIDs, activeClassStudentStatus, teacherID).Scan(&row).Error
+	if findErr != nil {
+		return false, findErr
+	}
+
+	return row.StudentID > 0, nil
 }
 
 func matchesDateRange(targetDate string, dateFrom string, dateTo string) bool {
