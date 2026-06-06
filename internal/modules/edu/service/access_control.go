@@ -139,6 +139,7 @@ type OperationLogItem struct {
 type OperationLogFilter struct {
 	UserID   uint64
 	Module   string
+	Action   string
 	DateFrom string
 	DateTo   string
 }
@@ -823,26 +824,7 @@ func (s *Service) OperationLogsWithFilter(filter OperationLogFilter) ([]Operatio
 		return []OperationLogItem{}, nil
 	}
 
-	query := s.db.Model(&edumodel.OperationLog{})
-	if filter.UserID > 0 {
-		query = query.Where("user_id = ?", filter.UserID)
-	}
-
-	moduleName := strings.TrimSpace(filter.Module)
-	if moduleName != "" {
-		query = query.Where("module = ?", moduleName)
-	}
-
-	dateFrom := strings.TrimSpace(filter.DateFrom)
-	if dateFrom != "" {
-		query = query.Where("DATE(created_at) >= ?", dateFrom)
-	}
-
-	dateTo := strings.TrimSpace(filter.DateTo)
-	if dateTo != "" {
-		query = query.Where("DATE(created_at) <= ?", dateTo)
-	}
-
+	query := s.operationLogQuery(s.db, filter)
 	var logs []edumodel.OperationLog
 	listErr := query.Order("id DESC").Find(&logs).Error
 	if listErr != nil {
@@ -865,6 +847,35 @@ func (s *Service) OperationLogsWithFilter(filter OperationLogFilter) ([]Operatio
 	}
 
 	return items, nil
+}
+
+func (s *Service) operationLogQuery(base *gorm.DB, filter OperationLogFilter) *gorm.DB {
+	query := base.Model(&edumodel.OperationLog{})
+	if filter.UserID > 0 {
+		query = query.Where("user_id = ?", filter.UserID)
+	}
+
+	moduleName := strings.TrimSpace(filter.Module)
+	if moduleName != "" {
+		query = query.Where("module = ?", moduleName)
+	}
+
+	actionName := strings.TrimSpace(filter.Action)
+	if actionName != "" {
+		query = query.Where("action = ?", actionName)
+	}
+
+	dateFrom := strings.TrimSpace(filter.DateFrom)
+	if dateFrom != "" {
+		query = query.Where("DATE(created_at) >= ?", dateFrom)
+	}
+
+	dateTo := strings.TrimSpace(filter.DateTo)
+	if dateTo != "" {
+		query = query.Where("DATE(created_at) <= ?", dateTo)
+	}
+
+	return query
 }
 
 func (s *Service) seedAccessControlIfEmpty(tx *gorm.DB, now time.Time) error {
