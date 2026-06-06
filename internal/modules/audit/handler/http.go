@@ -4,6 +4,8 @@ import (
 	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,11 +35,31 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	logs, logErr := h.service.OperationLogs()
+	userID, userErr := parseAuditUintParam(c.Query("userId"))
+	if userErr != nil {
+		response.Failed(c, 400, "user id is invalid")
+		return
+	}
+
+	logs, logErr := h.service.OperationLogsWithFilter(eduservice.OperationLogFilter{
+		UserID:   userID,
+		Module:   strings.TrimSpace(c.Query("module")),
+		DateFrom: strings.TrimSpace(c.Query("dateFrom")),
+		DateTo:   strings.TrimSpace(c.Query("dateTo")),
+	})
 	if logErr != nil {
 		response.InternalServerError(c)
 		return
 	}
 
 	response.Paginated(c, logs)
+}
+
+func parseAuditUintParam(rawValue string) (uint64, error) {
+	trimmedValue := strings.TrimSpace(rawValue)
+	if trimmedValue == "" {
+		return 0, nil
+	}
+
+	return strconv.ParseUint(trimmedValue, 10, 64)
 }
