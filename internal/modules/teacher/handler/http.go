@@ -70,7 +70,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	createdItem, createErr := h.service.CreateTeacher(input)
+	createdItem, createErr := h.service.CreateTeacher(input, currentOperator(c))
 	if createErr != nil {
 		handleTeacherServiceError(c, createErr)
 		return
@@ -124,7 +124,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.UpdateTeacher(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.UpdateTeacher(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		handleTeacherServiceError(c, updateErr)
 		return
@@ -203,5 +203,12 @@ func handleTeacherServiceError(c *gin.Context, serviceErr error) {
 		response.Failed(c, 400, "该账号已绑定其他老师")
 	default:
 		response.InternalServerError(c)
+	}
+}
+
+func currentOperator(c *gin.Context) eduservice.Operator {
+	return eduservice.Operator{
+		UserID:      c.GetUint64("current_user_id"),
+		DisplayName: c.GetString("current_user_name"),
 	}
 }

@@ -89,7 +89,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	saved, saveErr := h.service.SaveAttendance(c.Param("id"), payload, c.GetString("current_user_name"))
+	saved, saveErr := h.service.SaveAttendance(c.Param("id"), payload, c.GetString("current_user_name"), currentOperator(c))
 	if saveErr != nil {
 		response.InternalServerError(c)
 		return
@@ -109,4 +109,11 @@ func parseUintParam(rawValue string) (uint64, error) {
 	}
 
 	return strconv.ParseUint(trimmedValue, 10, 64)
+}
+
+func currentOperator(c *gin.Context) eduservice.Operator {
+	return eduservice.Operator{
+		UserID:      c.GetUint64("current_user_id"),
+		DisplayName: c.GetString("current_user_name"),
+	}
 }

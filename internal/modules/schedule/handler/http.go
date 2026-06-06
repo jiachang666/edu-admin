@@ -84,7 +84,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	createdItem, createErr := h.service.CreateSchedule(input)
+	createdItem, createErr := h.service.CreateSchedule(input, currentOperator(c))
 	if createErr != nil {
 		response.InternalServerError(c)
 		return
@@ -137,7 +137,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.UpdateSchedule(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.UpdateSchedule(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -161,7 +161,7 @@ func (h *Handler) reschedule(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.Reschedule(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.Reschedule(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -185,7 +185,7 @@ func (h *Handler) cancel(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.CancelSchedule(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.CancelSchedule(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -209,7 +209,7 @@ func (h *Handler) makeup(c *gin.Context) {
 		return
 	}
 
-	createdItem, found, createErr := h.service.CreateMakeupSchedule(c.Param("id"), input)
+	createdItem, found, createErr := h.service.CreateMakeupSchedule(c.Param("id"), input, currentOperator(c))
 	if createErr != nil {
 		response.InternalServerError(c)
 		return
@@ -286,7 +286,7 @@ func (h *Handler) saveAttendance(c *gin.Context) {
 		return
 	}
 
-	saved, saveErr := h.service.SaveAttendance(c.Param("id"), payload, c.GetString("current_user_name"))
+	saved, saveErr := h.service.SaveAttendance(c.Param("id"), payload, c.GetString("current_user_name"), currentOperator(c))
 	if saveErr != nil {
 		response.InternalServerError(c)
 		return
@@ -363,7 +363,7 @@ func (h *Handler) saveHomework(c *gin.Context) {
 		return
 	}
 
-	item, found, saveErr := h.service.SaveHomework(c.Param("id"), payload)
+	item, found, saveErr := h.service.SaveHomework(c.Param("id"), payload, currentOperator(c))
 	if saveErr != nil {
 		response.InternalServerError(c)
 		return
@@ -440,7 +440,7 @@ func (h *Handler) saveFeedback(c *gin.Context) {
 		return
 	}
 
-	item, found, saveErr := h.service.SaveFeedback(c.Param("id"), payload)
+	item, found, saveErr := h.service.SaveFeedback(c.Param("id"), payload, currentOperator(c))
 	if saveErr != nil {
 		response.InternalServerError(c)
 		return
@@ -529,6 +529,13 @@ func validateSchedulePayload(input eduservice.SchedulePayload) string {
 	}
 
 	return ""
+}
+
+func currentOperator(c *gin.Context) eduservice.Operator {
+	return eduservice.Operator{
+		UserID:      c.GetUint64("current_user_id"),
+		DisplayName: c.GetString("current_user_name"),
+	}
 }
 
 func validateScheduleActionPayload(input eduservice.ScheduleActionPayload, requireTime bool) string {
