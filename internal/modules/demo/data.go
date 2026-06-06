@@ -449,6 +449,7 @@ func Overview() map[string]any {
 	todayLeaveCount := 0
 	todayAbsentCount := 0
 	pendingActionCount := 0
+	pendingHomeworkCount := 0
 
 	for _, schedule := range schedules {
 		if schedule.LessonDate == today {
@@ -474,16 +475,47 @@ func Overview() map[string]any {
 		}
 	}
 
+	for _, homework := range Homeworks() {
+		if homework.Status == "draft" {
+			pendingHomeworkCount++
+		}
+	}
+
+	pendingItems := make([]map[string]any, 0, 3)
+	if todayPendingCheck > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "attendance",
+			"label": "待签到班级",
+			"count": todayPendingCheck,
+		})
+	}
+	if pendingActionCount > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "notice",
+			"label": "待发送通知",
+			"count": pendingActionCount,
+		})
+	}
+	if pendingHomeworkCount > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "homework",
+			"label": "待补作业反馈",
+			"count": pendingHomeworkCount,
+		})
+	}
+
 	return map[string]any{
-		"todayCourses":       todayCourses,
-		"todayPendingCheck":  todayPendingCheck,
-		"todayLeaveCount":    todayLeaveCount,
-		"todayAbsentCount":   todayAbsentCount,
-		"studentCount":       len(students),
-		"classCount":         len(classes),
-		"pendingActionCount": pendingActionCount,
-		"upcomingLessons":    Schedules(),
-		"latestNotices":      notices,
+		"todayCourses":         todayCourses,
+		"todayPendingCheck":    todayPendingCheck,
+		"todayLeaveCount":      todayLeaveCount,
+		"todayAbsentCount":     todayAbsentCount,
+		"studentCount":         len(students),
+		"classCount":           len(classes),
+		"pendingActionCount":   pendingActionCount,
+		"pendingHomeworkCount": pendingHomeworkCount,
+		"pendingItems":         pendingItems,
+		"upcomingLessons":      Schedules(),
+		"latestNotices":        notices,
 	}
 }
 
