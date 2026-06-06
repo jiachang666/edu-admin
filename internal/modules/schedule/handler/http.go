@@ -4,6 +4,7 @@ import (
 	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,7 +65,26 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	schedules, scheduleErr := h.service.SchedulesWithScope(scope)
+	classID, classErr := parseScheduleUintParam(c.Query("classId"))
+	if classErr != nil {
+		response.Failed(c, 400, "class id is invalid")
+		return
+	}
+
+	teacherID, teacherErr := parseScheduleUintParam(c.Query("teacherId"))
+	if teacherErr != nil {
+		response.Failed(c, 400, "teacher id is invalid")
+		return
+	}
+
+	schedules, scheduleErr := h.service.SchedulesWithFilter(eduservice.ScheduleFilter{
+		ClassID:   classID,
+		TeacherID: teacherID,
+		DateFrom:  strings.TrimSpace(c.Query("dateFrom")),
+		DateTo:    strings.TrimSpace(c.Query("dateTo")),
+		Status:    strings.TrimSpace(c.Query("status")),
+		Scope:     scope,
+	})
 	if scheduleErr != nil {
 		response.InternalServerError(c)
 		return
@@ -536,6 +556,15 @@ func currentOperator(c *gin.Context) eduservice.Operator {
 		UserID:      c.GetUint64("current_user_id"),
 		DisplayName: c.GetString("current_user_name"),
 	}
+}
+
+func parseScheduleUintParam(rawValue string) (uint64, error) {
+	trimmedValue := strings.TrimSpace(rawValue)
+	if trimmedValue == "" {
+		return 0, nil
+	}
+
+	return strconv.ParseUint(trimmedValue, 10, 64)
 }
 
 func validateScheduleActionPayload(input eduservice.ScheduleActionPayload, requireTime bool) string {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"edu-admin/internal/modules/demo"
 )
@@ -109,5 +110,52 @@ func TestTeacherNoticeScopeMatchesStudentTargets(t *testing.T) {
 	}
 	if otherAccessible {
 		t.Fatal("expected other teacher student notice to be inaccessible")
+	}
+}
+
+func TestSchedulesWithFilterAppliesClassTeacherAndStatus(t *testing.T) {
+	svc := New(nil)
+
+	items, listErr := svc.SchedulesWithFilter(ScheduleFilter{
+		ClassID:   1,
+		TeacherID: 1,
+		Status:    "待签到",
+	})
+	if listErr != nil {
+		t.Fatalf("SchedulesWithFilter returned error: %v", listErr)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 schedule, got %d", len(items))
+	}
+	if items[0].ID != 1 {
+		t.Fatalf("expected schedule 1, got %d", items[0].ID)
+	}
+}
+
+func TestSchedulesWithFilterAppliesDateRangeAndTeacherScope(t *testing.T) {
+	svc := New(nil)
+
+	tomorrow := time.Now().AddDate(0, 0, 1).Format(dateLayout)
+	items, listErr := svc.SchedulesWithFilter(ScheduleFilter{
+		DateFrom: tomorrow,
+		DateTo:   tomorrow,
+		Scope: Scope{
+			UserID:         3,
+			PrimaryRole:    "teacher",
+			TeacherID:      3,
+			RestrictToSelf: true,
+		},
+	})
+	if listErr != nil {
+		t.Fatalf("SchedulesWithFilter returned error: %v", listErr)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 schedule in scope, got %d", len(items))
+	}
+	if items[0].TeacherID != 3 {
+		t.Fatalf("expected teacher 3 schedule, got teacher %d", items[0].TeacherID)
+	}
+	if items[0].LessonDate != tomorrow {
+		t.Fatalf("expected lesson date %s, got %s", tomorrow, items[0].LessonDate)
 	}
 }
