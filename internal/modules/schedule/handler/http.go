@@ -244,7 +244,7 @@ func (h *Handler) saveAttendance(c *gin.Context) {
 		return
 	}
 
-	saved, saveErr := h.service.SaveAttendance(c.Param("id"), payload)
+	saved, saveErr := h.service.SaveAttendance(c.Param("id"), payload, c.GetString("current_user_name"))
 	if saveErr != nil {
 		response.InternalServerError(c)
 		return

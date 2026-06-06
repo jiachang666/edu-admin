@@ -111,6 +111,8 @@ type AttendanceItem struct {
 	ParentMobile string `json:"parentMobile"`
 	Status       string `json:"status"`
 	Remark       string `json:"remark"`
+	UpdatedBy    string `json:"updatedBy"`
+	UpdatedAt    string `json:"updatedAt"`
 }
 
 type Homework struct {

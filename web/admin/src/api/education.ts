@@ -267,6 +267,8 @@ export type AttendanceEntry = {
   parentMobile: string;
   status: string;
   remark: string;
+  updatedBy: string;
+  updatedAt: string;
 };
 
 export type AttendanceSession = {
@@ -285,6 +287,22 @@ export type AttendanceSession = {
   leaveCount: number;
   absentCount: number;
   pendingCount: number;
+};
+
+export type AttendanceRecord = {
+  scheduleId: number;
+  classId: number;
+  className: string;
+  studentId: number;
+  studentName: string;
+  teacherName: string;
+  lessonDate: string;
+  lessonTime: string;
+  status: string;
+  remark: string;
+  updatedBy: string;
+  updatedAt: string;
+  parentMobile: string;
 };
 
 export type AttendanceDetail = {
@@ -605,6 +623,16 @@ export function fetchNoticeTargets(id: number) {
 
 export function fetchAttendanceSessionList() {
   return unwrap<PagedResult<AttendanceSession>>(http.get("/attendance"));
+}
+
+export function fetchAttendanceRecordList(params?: {
+  mode?: string;
+  classId?: number;
+  studentId?: number;
+  date?: string;
+  status?: string;
+}) {
+  return unwrap<PagedResult<AttendanceRecord>>(http.get("/attendance", { params }));
 }
 
 export function fetchScheduleAttendance(scheduleId: number) {
