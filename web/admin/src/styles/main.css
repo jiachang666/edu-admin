@@ -909,6 +909,12 @@ a {
   gap: 22px;
 }
 
+.teacher-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 22px;
+}
+
 .student-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1007,6 +1013,24 @@ a {
 
 .stack-item--stretch {
   align-items: flex-start;
+}
+
+.teacher-schedule-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.teacher-detail-phone {
+  font-size: 1.25rem;
+  letter-spacing: -0.03em;
+  word-break: break-word;
+}
+
+.teacher-detail-empty {
+  margin-top: 16px;
 }
 
 .quick-actions-grid {
@@ -1428,6 +1452,7 @@ a {
   .homework-editor-grid,
   .dialog-grid,
   .class-detail-grid,
+  .teacher-detail-grid,
   .student-detail-grid,
   .quick-actions-grid,
   .permission-grid {
@@ -1514,6 +1539,10 @@ a {
   .page-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .teacher-schedule-actions {
+    align-items: flex-start;
   }
 
   .toolbar-field {

@@ -72,6 +72,7 @@ type Schedule struct {
 	ClassID          int    `json:"classId"`
 	ClassName        string `json:"className"`
 	CourseName       string `json:"courseName"`
+	TeacherID        int    `json:"teacherId"`
 	TeacherName      string `json:"teacherName"`
 	Campus           string `json:"campus"`
 	Classroom        string `json:"classroom"`
@@ -191,9 +192,9 @@ func Schedules() []Schedule {
 	tomorrow := now.AddDate(0, 0, 1).Format(dateLayout)
 
 	schedules := []Schedule{
-		{ID: 1, ClassID: 1, ClassName: "周末奥数提高班", CourseName: "数学思维", TeacherName: "周老师", Campus: "明发校区", Classroom: "A201", LessonDate: today, LessonTime: "09:00-10:30", AttendanceStatus: "待签到"},
-		{ID: 2, ClassID: 2, ClassName: "英语阅读进阶班", CourseName: "英语阅读", TeacherName: "林老师", Campus: "百汇校区", Classroom: "B103", LessonDate: today, LessonTime: "14:00-15:30", AttendanceStatus: "已完成"},
-		{ID: 3, ClassID: 3, ClassName: "少儿创意美术班", CourseName: "创意美术", TeacherName: "陈老师", Campus: "明发校区", Classroom: "Art-2", LessonDate: tomorrow, LessonTime: "10:00-11:30", AttendanceStatus: "待上课"},
+		{ID: 1, ClassID: 1, ClassName: "周末奥数提高班", CourseName: "数学思维", TeacherID: 1, TeacherName: "周老师", Campus: "明发校区", Classroom: "A201", LessonDate: today, LessonTime: "09:00-10:30", AttendanceStatus: "待签到"},
+		{ID: 2, ClassID: 2, ClassName: "英语阅读进阶班", CourseName: "英语阅读", TeacherID: 2, TeacherName: "林老师", Campus: "百汇校区", Classroom: "B103", LessonDate: today, LessonTime: "14:00-15:30", AttendanceStatus: "已完成"},
+		{ID: 3, ClassID: 3, ClassName: "少儿创意美术班", CourseName: "创意美术", TeacherID: 3, TeacherName: "陈老师", Campus: "明发校区", Classroom: "Art-2", LessonDate: tomorrow, LessonTime: "10:00-11:30", AttendanceStatus: "待上课"},
 	}
 
 	attendanceStoreMu.RLock()

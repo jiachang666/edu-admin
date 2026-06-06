@@ -98,16 +98,16 @@ type StudentItem struct {
 }
 
 type StudentPayload struct {
-	Name            string
-	Gender          string
-	SchoolName      string
-	GradeName       string
-	Campus          string
-	RemainingHours  int
-	Status          string
-	Remark          string
-	GuardianName    string
-	GuardianMobile  string
+	Name             string
+	Gender           string
+	SchoolName       string
+	GradeName        string
+	Campus           string
+	RemainingHours   int
+	Status           string
+	Remark           string
+	GuardianName     string
+	GuardianMobile   string
 	GuardianRelation string
 }
 
@@ -169,6 +169,12 @@ type ClassItem struct {
 	EndDate        string `json:"endDate" gorm:"column:end_date"`
 	Status         string `json:"status"`
 	Remark         string `json:"remark"`
+}
+
+type TeacherDetail struct {
+	Teacher         TeacherItem    `json:"teacher"`
+	Classes         []ClassItem    `json:"classes"`
+	RecentSchedules []ScheduleItem `json:"recentSchedules"`
 }
 
 type StudentDetail struct {
@@ -647,6 +653,52 @@ func (s *Service) TeacherOptions() ([]Option, error) {
 	}
 
 	return options, nil
+}
+
+func (s *Service) TeacherDetail(rawID string) (TeacherDetail, bool, error) {
+	const recentItemLimit = 6
+
+	teacherItem, found, teacherErr := s.Teacher(rawID)
+	if teacherErr != nil {
+		return TeacherDetail{}, false, teacherErr
+	}
+	if !found {
+		return TeacherDetail{}, false, nil
+	}
+
+	allClasses, classErr := s.Classes()
+	if classErr != nil {
+		return TeacherDetail{}, false, classErr
+	}
+
+	teacherClasses := make([]ClassItem, 0, len(allClasses))
+	for _, classItem := range allClasses {
+		if classItem.TeacherID != teacherItem.ID {
+			continue
+		}
+
+		teacherClasses = append(teacherClasses, classItem)
+	}
+
+	allSchedules, scheduleErr := s.Schedules()
+	if scheduleErr != nil {
+		return TeacherDetail{}, false, scheduleErr
+	}
+
+	teacherSchedules := make([]ScheduleItem, 0, len(allSchedules))
+	for _, scheduleItem := range allSchedules {
+		if scheduleItem.TeacherID != teacherItem.ID {
+			continue
+		}
+
+		teacherSchedules = append(teacherSchedules, scheduleItem)
+	}
+
+	return TeacherDetail{
+		Teacher:         teacherItem,
+		Classes:         teacherClasses,
+		RecentSchedules: teacherRecentSchedules(teacherSchedules, recentItemLimit),
+	}, true, nil
 }
 
 func (s *Service) Courses(filter CourseFilter) ([]CourseItem, error) {
@@ -3534,11 +3586,13 @@ func teacherItemsFromDemo() []TeacherItem {
 			ID:             uint64(item.ID),
 			Name:           item.Name,
 			Mobile:         item.Mobile,
+			Title:          item.Title,
 			MainSubject:    item.MainSubject,
 			EmploymentType: item.EmploymentType,
 			WeeklyHours:    item.WeeklyHours,
 			Campus:         item.Campus,
 			Status:         item.Status,
+			Remark:         item.Remark,
 		})
 	}
 	return items
@@ -3553,11 +3607,13 @@ func teacherItemFromDemo(rawID string) (TeacherItem, bool, error) {
 		ID:             uint64(item.ID),
 		Name:           item.Name,
 		Mobile:         item.Mobile,
+		Title:          item.Title,
 		MainSubject:    item.MainSubject,
 		EmploymentType: item.EmploymentType,
 		WeeklyHours:    item.WeeklyHours,
 		Campus:         item.Campus,
 		Status:         item.Status,
+		Remark:         item.Remark,
 	}, true, nil
 }
 
@@ -3732,6 +3788,7 @@ func scheduleItemsFromDemo(source []demo.Schedule) []ScheduleItem {
 			ClassID:          uint64(item.ClassID),
 			ClassName:        item.ClassName,
 			CourseName:       item.CourseName,
+			TeacherID:        uint64(item.TeacherID),
 			TeacherName:      item.TeacherName,
 			Campus:           item.Campus,
 			Classroom:        item.Classroom,
@@ -3939,6 +3996,48 @@ func summarizeAttendanceItems(items []AttendanceItem) (int, int, int, int) {
 	}
 
 	return presentCount, leaveCount, absentCount, pendingCount
+}
+
+func teacherRecentSchedules(items []ScheduleItem, limit int) []ScheduleItem {
+	if len(items) == 0 || limit <= 0 {
+		return []ScheduleItem{}
+	}
+
+	today := startOfDay(time.Now())
+	upcomingItems := make([]ScheduleItem, 0, len(items))
+	pastItems := make([]ScheduleItem, 0, len(items))
+
+	for _, item := range items {
+		lessonDate, parseErr := time.ParseInLocation(dateLayout, item.LessonDate, time.Local)
+		if parseErr != nil {
+			upcomingItems = append(upcomingItems, item)
+			continue
+		}
+
+		if startOfDay(lessonDate).Before(today) {
+			pastItems = append(pastItems, item)
+			continue
+		}
+
+		upcomingItems = append(upcomingItems, item)
+	}
+
+	recentItems := make([]ScheduleItem, 0, limit)
+	for _, item := range upcomingItems {
+		recentItems = append(recentItems, item)
+		if len(recentItems) >= limit {
+			return recentItems
+		}
+	}
+
+	for index := len(pastItems) - 1; index >= 0; index-- {
+		recentItems = append(recentItems, pastItems[index])
+		if len(recentItems) >= limit {
+			break
+		}
+	}
+
+	return recentItems
 }
 
 func defaultAttendanceItemStatus(scheduleStatus string, index int, total int) string {
