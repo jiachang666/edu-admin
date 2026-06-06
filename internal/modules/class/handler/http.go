@@ -91,8 +91,19 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	input, ok := bindClassPayload(c)
 	if !ok {
+		return
+	}
+
+	if !h.service.ScopeAllowsTeacher(scope, input.TeacherID) {
+		response.Failed(c, 404, "teacher not found")
 		return
 	}
 
@@ -140,8 +151,29 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	_, found, classErr := h.service.ClassAccessible(c.Param("id"), scope)
+	if classErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found {
+		response.Failed(c, 404, "class not found")
+		return
+	}
+
 	input, ok := bindClassPayload(c)
 	if !ok {
+		return
+	}
+
+	if !h.service.ScopeAllowsTeacher(scope, input.TeacherID) {
+		response.Failed(c, 404, "teacher not found")
 		return
 	}
 
@@ -195,6 +227,22 @@ func (h *Handler) addStudents(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	_, found, classErr := h.service.ClassAccessible(c.Param("id"), scope)
+	if classErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found {
+		response.Failed(c, 404, "class not found")
+		return
+	}
+
 	var payload classStudentPayload
 	bindErr := c.ShouldBindJSON(&payload)
 	if bindErr != nil {
@@ -218,6 +266,16 @@ func (h *Handler) addStudents(c *gin.Context) {
 		return
 	}
 
+	accessible, accessErr := h.service.StudentIDsAccessible(studentIDs, scope)
+	if accessErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !accessible {
+		response.Failed(c, 404, "student not found")
+		return
+	}
+
 	added, addErr := h.service.AddStudentsToClass(c.Param("id"), studentIDs, currentOperator(c))
 	if addErr != nil {
 		response.InternalServerError(c)
@@ -234,6 +292,22 @@ func (h *Handler) addStudents(c *gin.Context) {
 func (h *Handler) removeStudent(c *gin.Context) {
 	if !permission.HasFromContext(c, "classes:manage") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	_, found, classErr := h.service.ClassAccessible(c.Param("id"), scope)
+	if classErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !found {
+		response.Failed(c, 404, "class not found")
 		return
 	}
 
