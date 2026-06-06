@@ -34,6 +34,9 @@ var (
 	ErrInvalidPermissionCodes   = errors.New("存在未识别的权限项")
 	ErrCannotDisableCurrentUser = errors.New("不能停用当前登录账号")
 	ErrProtectedRole            = errors.New("内置超级管理员角色不能停用或降权")
+	ErrTeacherUserNotFound      = errors.New("关联老师账号不存在")
+	ErrTeacherUserRoleInvalid   = errors.New("关联账号不是老师角色")
+	ErrTeacherUserAlreadyBound  = errors.New("关联账号已绑定其他老师")
 )
 
 type Operator struct {
@@ -78,6 +81,12 @@ type UserPayload struct {
 	Mobile      string `json:"mobile"`
 	RoleCode    string `json:"roleCode"`
 	Status      string `json:"status"`
+}
+
+type UserFilter struct {
+	Keyword string
+	Status  string
+	RoleID  uint64
 }
 
 type RoleItem struct {
@@ -312,12 +321,39 @@ func (s *Service) AuthProfileByUserID(userID uint64) (AuthProfile, bool, error) 
 }
 
 func (s *Service) Users() ([]UserItem, error) {
+	return s.UsersWithFilter(UserFilter{})
+}
+
+func (s *Service) UsersWithFilter(filter UserFilter) ([]UserItem, error) {
 	if s.db == nil {
 		return []UserItem{}, nil
 	}
 
+	query := s.db.Model(&edumodel.User{})
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		query = query.Where(
+			"(username LIKE ? OR display_name LIKE ? OR mobile LIKE ?)",
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	if filter.RoleID > 0 {
+		query = query.Joins("JOIN user_roles AS ur_filter ON ur_filter.user_id = users.id").
+			Where("ur_filter.role_id = ?", filter.RoleID)
+	}
+
 	var users []edumodel.User
-	listErr := s.db.Order("id ASC").Find(&users).Error
+	listErr := query.Order("users.id ASC").Find(&users).Error
 	if listErr != nil {
 		return nil, listErr
 	}
