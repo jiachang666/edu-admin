@@ -90,6 +90,7 @@ type Notice struct {
 	TargetScope       string `json:"targetScope"`
 	RelatedClassID    int    `json:"relatedClassId"`
 	RelatedScheduleID int    `json:"relatedScheduleId"`
+	StudentIDs        []int  `json:"studentIds"`
 	Status            string `json:"status"`
 	PublishAt         string `json:"publishAt"`
 	Author            string `json:"author"`

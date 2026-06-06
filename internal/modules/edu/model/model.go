@@ -158,6 +158,15 @@ type Notice struct {
 	UpdatedAt         time.Time  `gorm:"not null"`
 }
 
+type NoticeTarget struct {
+	ID         uint64    `gorm:"primaryKey"`
+	NoticeID   uint64    `gorm:"column:notice_id;not null;index"`
+	TargetType string    `gorm:"column:target_type;size:32;not null"`
+	ClassID    *uint64   `gorm:"column:class_id;index"`
+	StudentID  *uint64   `gorm:"column:student_id;index"`
+	CreatedAt  time.Time `gorm:"not null"`
+}
+
 type AttendanceRecord struct {
 	ID         uint64     `gorm:"primaryKey"`
 	ScheduleID uint64     `gorm:"column:schedule_id;not null;index;uniqueIndex:uk_schedule_student"`

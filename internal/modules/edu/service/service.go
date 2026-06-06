@@ -259,16 +259,17 @@ type ScheduleDetail struct {
 }
 
 type NoticeItem struct {
-	ID                uint64 `json:"id"`
-	Title             string `json:"title"`
-	Content           string `json:"content"`
-	Category          string `json:"category"`
-	TargetScope       string `json:"targetScope" gorm:"column:target_scope"`
-	RelatedClassID    uint64 `json:"relatedClassId" gorm:"column:related_class_id"`
-	RelatedScheduleID uint64 `json:"relatedScheduleId" gorm:"column:related_schedule_id"`
-	Status            string `json:"status"`
-	PublishAt         string `json:"publishAt"`
-	Author            string `json:"author"`
+	ID                uint64   `json:"id"`
+	Title             string   `json:"title"`
+	Content           string   `json:"content"`
+	Category          string   `json:"category"`
+	TargetScope       string   `json:"targetScope" gorm:"column:target_scope"`
+	RelatedClassID    uint64   `json:"relatedClassId" gorm:"column:related_class_id"`
+	RelatedScheduleID uint64   `json:"relatedScheduleId" gorm:"column:related_schedule_id"`
+	StudentIDs        []uint64 `json:"studentIds"`
+	Status            string   `json:"status"`
+	PublishAt         string   `json:"publishAt"`
+	Author            string   `json:"author"`
 }
 
 type NoticeTargetItem struct {
@@ -284,14 +285,18 @@ type NoticePayload struct {
 	TargetScope       string `json:"targetScope"`
 	RelatedClassID    uint64
 	RelatedScheduleID uint64
-	Status            string `json:"status"`
-	Author            string `json:"author"`
+	StudentIDs        []uint64 `json:"studentIds"`
+	Status            string   `json:"status"`
+	Author            string   `json:"author"`
 }
 
 type NoticeFilter struct {
-	ClassID uint64
-	Status  string
-	Date    string
+	ClassID    uint64
+	Status     string
+	NoticeType string
+	Date       string
+	DateFrom   string
+	DateTo     string
 }
 
 type AttendanceItem struct {
@@ -423,6 +428,7 @@ func (s *Service) Bootstrap(autoSeed bool) error {
 		&edumodel.Homework{},
 		&edumodel.ClassFeedback{},
 		&edumodel.Notice{},
+		&edumodel.NoticeTarget{},
 	)
 	if migrateErr != nil {
 		return migrateErr
@@ -3342,10 +3348,7 @@ SELECT
   created_at,
   author_name AS author
 FROM notices
-WHERE (? = 0 OR COALESCE(related_class_id, 0) = ?)
-  AND (? = '' OR status = ?)
-  AND (? = '' OR DATE(COALESCE(publish_at, created_at)) = ?)
-ORDER BY COALESCE(publish_at, created_at) DESC, id DESC
+WHERE 1 = 1
 `
 
 	type noticeRow struct {
@@ -3363,16 +3366,42 @@ ORDER BY COALESCE(publish_at, created_at) DESC, id DESC
 	}
 
 	var rows []noticeRow
+	queryArgs := make([]any, 0, 6)
+	if filter.ClassID > 0 {
+		query += " AND COALESCE(related_class_id, 0) = ?"
+		queryArgs = append(queryArgs, filter.ClassID)
+	}
+
 	filterDate := strings.TrimSpace(filter.Date)
 	filterStatus := strings.TrimSpace(filter.Status)
+	filterNoticeType := strings.TrimSpace(filter.NoticeType)
+	filterDateFrom := strings.TrimSpace(filter.DateFrom)
+	filterDateTo := strings.TrimSpace(filter.DateTo)
+	if filterStatus != "" {
+		query += " AND status = ?"
+		queryArgs = append(queryArgs, filterStatus)
+	}
+	if filterNoticeType != "" {
+		query += " AND notice_type = ?"
+		queryArgs = append(queryArgs, filterNoticeType)
+	}
+	if filterDate != "" {
+		query += " AND DATE(COALESCE(publish_at, created_at)) = ?"
+		queryArgs = append(queryArgs, filterDate)
+	}
+	if filterDateFrom != "" {
+		query += " AND DATE(COALESCE(publish_at, created_at)) >= ?"
+		queryArgs = append(queryArgs, filterDateFrom)
+	}
+	if filterDateTo != "" {
+		query += " AND DATE(COALESCE(publish_at, created_at)) <= ?"
+		queryArgs = append(queryArgs, filterDateTo)
+	}
+	query += " ORDER BY COALESCE(publish_at, created_at) DESC, id DESC"
+
 	listErr := s.db.Raw(
 		query,
-		filter.ClassID,
-		filter.ClassID,
-		filterStatus,
-		filterStatus,
-		filterDate,
-		filterDate,
+		queryArgs...,
 	).Scan(&rows).Error
 	if listErr != nil {
 		return nil, listErr
@@ -3393,6 +3422,7 @@ ORDER BY COALESCE(publish_at, created_at) DESC, id DESC
 			TargetScope:       row.TargetScope,
 			RelatedClassID:    row.RelatedClassID,
 			RelatedScheduleID: row.RelatedScheduleID,
+			StudentIDs:        []uint64{},
 			Status:            row.Status,
 			PublishAt:         publishAt,
 			Author:            row.Author,
@@ -3403,23 +3433,101 @@ ORDER BY COALESCE(publish_at, created_at) DESC, id DESC
 }
 
 func (s *Service) Notice(rawID string) (NoticeItem, bool, error) {
-	items, listErr := s.Notices()
-	if listErr != nil {
-		return NoticeItem{}, false, listErr
-	}
-
-	for _, item := range items {
-		if fmt.Sprintf("%d", item.ID) == rawID {
-			return item, true, nil
+	if s.db == nil {
+		rawItem, found := demo.FindNotice(rawID)
+		if !found {
+			return NoticeItem{}, false, nil
 		}
+
+		return NoticeItem{
+			ID:                uint64(rawItem.ID),
+			Title:             rawItem.Title,
+			Content:           rawItem.Content,
+			Category:          rawItem.Category,
+			TargetScope:       rawItem.TargetScope,
+			RelatedClassID:    uint64(rawItem.RelatedClassID),
+			RelatedScheduleID: uint64(rawItem.RelatedScheduleID),
+			StudentIDs:        noticeStudentIDsFromDemo(rawItem.StudentIDs),
+			Status:            rawItem.Status,
+			PublishAt:         rawItem.PublishAt,
+			Author:            rawItem.Author,
+		}, true, nil
 	}
 
-	return NoticeItem{}, false, nil
+	query := `
+SELECT
+  id,
+  title,
+  content,
+  notice_type AS category,
+  target_scope,
+  COALESCE(related_class_id, 0) AS related_class_id,
+  COALESCE(related_schedule_id, 0) AS related_schedule_id,
+  status,
+  publish_at,
+  created_at,
+  author_name AS author
+FROM notices
+WHERE id = ?
+LIMIT 1
+`
+
+	type noticeRow struct {
+		ID                uint64     `gorm:"column:id"`
+		Title             string     `gorm:"column:title"`
+		Content           string     `gorm:"column:content"`
+		Category          string     `gorm:"column:category"`
+		TargetScope       string     `gorm:"column:target_scope"`
+		RelatedClassID    uint64     `gorm:"column:related_class_id"`
+		RelatedScheduleID uint64     `gorm:"column:related_schedule_id"`
+		Status            string     `gorm:"column:status"`
+		PublishAt         *time.Time `gorm:"column:publish_at"`
+		CreatedAt         time.Time  `gorm:"column:created_at"`
+		Author            string     `gorm:"column:author"`
+	}
+
+	var row noticeRow
+	findErr := s.db.Raw(query, rawID).Scan(&row).Error
+	if findErr != nil {
+		return NoticeItem{}, false, findErr
+	}
+	if row.ID == 0 {
+		return NoticeItem{}, false, nil
+	}
+
+	studentIDs, studentErr := s.noticeStudentIDs(rawID)
+	if studentErr != nil {
+		return NoticeItem{}, false, studentErr
+	}
+
+	publishAt := formatDateTime(row.PublishAt)
+	if publishAt == "" {
+		publishAt = row.CreatedAt.Format(dateTimeLayout)
+	}
+
+	return NoticeItem{
+		ID:                row.ID,
+		Title:             row.Title,
+		Content:           row.Content,
+		Category:          row.Category,
+		TargetScope:       row.TargetScope,
+		RelatedClassID:    row.RelatedClassID,
+		RelatedScheduleID: row.RelatedScheduleID,
+		StudentIDs:        studentIDs,
+		Status:            row.Status,
+		PublishAt:         publishAt,
+		Author:            row.Author,
+	}, true, nil
 }
 
 func (s *Service) NoticeTargets(rawNoticeID string) ([]NoticeTargetItem, error) {
 	if s.db == nil {
 		return noticeTargetItemsFromDemo(demo.NoticeTargets(rawNoticeID)), nil
+	}
+
+	targetItems, targetErr := s.noticeTargetsFromRelations(rawNoticeID)
+	if targetErr != nil {
+		return nil, targetErr
 	}
 
 	query := `
@@ -3456,26 +3564,39 @@ LIMIT 1
 		return nil, findErr
 	}
 
-	if row.ScopeName == "" && row.ClassName == "" {
+	if row.ScopeName == "" && row.ClassName == "" && row.ScheduleID == 0 && len(targetItems) == 0 {
 		return []NoticeTargetItem{}, nil
 	}
 
-	items := make([]NoticeTargetItem, 0, 3)
-	if row.ClassName != "" {
+	items := make([]NoticeTargetItem, 0, len(targetItems)+2)
+	items = append(items, targetItems...)
+
+	hasClassTarget := false
+	hasScheduleTarget := false
+	for _, item := range targetItems {
+		if item.Type == "关联班级" {
+			hasClassTarget = true
+		}
+		if item.Type == "关联课程安排" {
+			hasScheduleTarget = true
+		}
+	}
+
+	if !hasClassTarget && row.ClassName != "" {
 		items = append(items, NoticeTargetItem{
 			Name:   row.ClassName,
 			Type:   "关联班级",
 			Campus: row.Campus,
 		})
 	}
-	if row.ScopeName != "" {
+	if len(targetItems) == 0 && row.ScopeName != "" {
 		items = append(items, NoticeTargetItem{
 			Name:   row.ScopeName,
 			Type:   "通知范围",
 			Campus: row.Campus,
 		})
 	}
-	if row.ScheduleID > 0 && row.ScheduleDate != nil {
+	if !hasScheduleTarget && row.ScheduleID > 0 && row.ScheduleDate != nil {
 		items = append(items, NoticeTargetItem{
 			Name:   fmt.Sprintf("%s %s", row.ScheduleDate.Format(dateLayout), formatLessonTime(row.StartTime, row.EndTime)),
 			Type:   "关联课程安排",
@@ -3486,7 +3607,78 @@ LIMIT 1
 	return items, nil
 }
 
+func (s *Service) noticeTargetsFromRelations(rawNoticeID string) ([]NoticeTargetItem, error) {
+	query := `
+SELECT
+  nt.target_type,
+  COALESCE(c.name, '') AS class_name,
+  COALESCE(c.campus, '') AS class_campus,
+  COALESCE(st.name, '') AS student_name,
+  COALESCE(st.campus, '') AS student_campus
+FROM notice_targets AS nt
+LEFT JOIN classes AS c
+  ON c.id = nt.class_id
+LEFT JOIN students AS st
+  ON st.id = nt.student_id
+WHERE nt.notice_id = ?
+ORDER BY nt.id ASC
+`
+
+	type noticeRelationRow struct {
+		TargetType    string `gorm:"column:target_type"`
+		ClassName     string `gorm:"column:class_name"`
+		ClassCampus   string `gorm:"column:class_campus"`
+		StudentName   string `gorm:"column:student_name"`
+		StudentCampus string `gorm:"column:student_campus"`
+	}
+
+	var rows []noticeRelationRow
+	listErr := s.db.Raw(query, rawNoticeID).Scan(&rows).Error
+	if listErr != nil {
+		if strings.Contains(strings.ToLower(listErr.Error()), "doesn't exist") {
+			return []NoticeTargetItem{}, nil
+		}
+		return nil, listErr
+	}
+
+	items := make([]NoticeTargetItem, 0, len(rows))
+	for _, row := range rows {
+		switch row.TargetType {
+		case "class":
+			if row.ClassName == "" {
+				continue
+			}
+			items = append(items, NoticeTargetItem{
+				Name:   row.ClassName,
+				Type:   "关联班级",
+				Campus: row.ClassCampus,
+			})
+		case "student":
+			if row.StudentName == "" {
+				continue
+			}
+			items = append(items, NoticeTargetItem{
+				Name:   row.StudentName,
+				Type:   "指定学员",
+				Campus: row.StudentCampus,
+			})
+		}
+	}
+
+	return items, nil
+}
+
 func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
+	if len(input.StudentIDs) > 0 {
+		studentNames, studentErr := s.noticeStudentNames(input.StudentIDs)
+		if studentErr != nil {
+			return NoticeItem{}, studentErr
+		}
+		if strings.TrimSpace(input.TargetScope) == "" || strings.TrimSpace(input.TargetScope) == "指定学员" {
+			input.TargetScope = buildStudentTargetScope(studentNames)
+		}
+	}
+
 	if s.db == nil {
 		notices := demo.Notices()
 		nextID := len(notices) + 1
@@ -3505,6 +3697,7 @@ func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
 			TargetScope:       input.TargetScope,
 			RelatedClassID:    input.RelatedClassID,
 			RelatedScheduleID: input.RelatedScheduleID,
+			StudentIDs:        cloneNoticeStudentIDs(input.StudentIDs),
 			Status:            input.Status,
 			PublishAt:         publishAt,
 			Author:            input.Author,
@@ -3518,6 +3711,7 @@ func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
 			TargetScope:       item.TargetScope,
 			RelatedClassID:    int(item.RelatedClassID),
 			RelatedScheduleID: int(item.RelatedScheduleID),
+			StudentIDs:        demoNoticeStudentIDs(input.StudentIDs),
 			Status:            item.Status,
 			PublishAt:         item.PublishAt,
 			Author:            item.Author,
@@ -3552,6 +3746,11 @@ func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
 		return NoticeItem{}, createErr
 	}
 
+	targetSaveErr := s.replaceNoticeTargets(record.ID, input)
+	if targetSaveErr != nil {
+		return NoticeItem{}, targetSaveErr
+	}
+
 	createdItem, found, detailErr := s.Notice(fmt.Sprintf("%d", record.ID))
 	if detailErr != nil {
 		return NoticeItem{}, detailErr
@@ -3565,6 +3764,7 @@ func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
 			TargetScope:       input.TargetScope,
 			RelatedClassID:    input.RelatedClassID,
 			RelatedScheduleID: input.RelatedScheduleID,
+			StudentIDs:        cloneNoticeStudentIDs(input.StudentIDs),
 			Status:            input.Status,
 			PublishAt:         formatDateTime(record.PublishAt),
 			Author:            input.Author,
@@ -3575,6 +3775,16 @@ func (s *Service) CreateNotice(input NoticePayload) (NoticeItem, error) {
 }
 
 func (s *Service) UpdateNotice(rawID string, input NoticePayload) (NoticeItem, bool, error) {
+	if len(input.StudentIDs) > 0 {
+		studentNames, studentErr := s.noticeStudentNames(input.StudentIDs)
+		if studentErr != nil {
+			return NoticeItem{}, false, studentErr
+		}
+		if strings.TrimSpace(input.TargetScope) == "" || strings.TrimSpace(input.TargetScope) == "指定学员" {
+			input.TargetScope = buildStudentTargetScope(studentNames)
+		}
+	}
+
 	if s.db == nil {
 		rawItem, found := demo.FindNotice(rawID)
 		if !found {
@@ -3597,6 +3807,7 @@ func (s *Service) UpdateNotice(rawID string, input NoticePayload) (NoticeItem, b
 			TargetScope:       input.TargetScope,
 			RelatedClassID:    input.RelatedClassID,
 			RelatedScheduleID: input.RelatedScheduleID,
+			StudentIDs:        cloneNoticeStudentIDs(input.StudentIDs),
 			Status:            input.Status,
 			PublishAt:         publishAt,
 			Author:            input.Author,
@@ -3610,6 +3821,7 @@ func (s *Service) UpdateNotice(rawID string, input NoticePayload) (NoticeItem, b
 			TargetScope:       item.TargetScope,
 			RelatedClassID:    int(item.RelatedClassID),
 			RelatedScheduleID: int(item.RelatedScheduleID),
+			StudentIDs:        demoNoticeStudentIDs(input.StudentIDs),
 			Status:            item.Status,
 			PublishAt:         item.PublishAt,
 			Author:            item.Author,
@@ -3651,6 +3863,14 @@ func (s *Service) UpdateNotice(rawID string, input NoticePayload) (NoticeItem, b
 		return NoticeItem{}, false, nil
 	}
 
+	noticeID, parseErr := strconv.ParseUint(rawID, 10, 64)
+	if parseErr == nil {
+		targetSaveErr := s.replaceNoticeTargets(noticeID, input)
+		if targetSaveErr != nil {
+			return NoticeItem{}, false, targetSaveErr
+		}
+	}
+
 	updatedItem, found, detailErr := s.Notice(rawID)
 	if detailErr != nil {
 		return NoticeItem{}, false, detailErr
@@ -3672,6 +3892,7 @@ func (s *Service) SendNotice(rawID string) (NoticeItem, bool, error) {
 		TargetScope:       item.TargetScope,
 		RelatedClassID:    item.RelatedClassID,
 		RelatedScheduleID: item.RelatedScheduleID,
+		StudentIDs:        cloneNoticeStudentIDs(item.StudentIDs),
 		Status:            "已发送",
 		Author:            item.Author,
 	}
@@ -3720,6 +3941,147 @@ func buildClassTargetScope(className string) string {
 	}
 
 	return fmt.Sprintf("%s家长群", trimmedClassName)
+}
+
+func buildStudentTargetScope(studentNames []string) string {
+	if len(studentNames) == 0 {
+		return "指定学员家长"
+	}
+
+	if len(studentNames) == 1 {
+		return fmt.Sprintf("%s家长", studentNames[0])
+	}
+
+	if len(studentNames) == 2 {
+		return fmt.Sprintf("%s、%s家长", studentNames[0], studentNames[1])
+	}
+
+	return fmt.Sprintf("%s等%d位学员家长", studentNames[0], len(studentNames))
+}
+
+func (s *Service) noticeStudentNames(studentIDs []uint64) ([]string, error) {
+	if len(studentIDs) == 0 {
+		return []string{}, nil
+	}
+
+	if s.db == nil {
+		names := make([]string, 0, len(studentIDs))
+		for _, studentID := range studentIDs {
+			item, found := demo.FindStudent(fmt.Sprintf("%d", studentID))
+			if found {
+				names = append(names, item.Name)
+			}
+		}
+		return names, nil
+	}
+
+	var students []edumodel.Student
+	listErr := s.db.
+		Where("id IN ?", studentIDs).
+		Order("id ASC").
+		Find(&students).Error
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	nameMap := make(map[uint64]string, len(students))
+	for _, student := range students {
+		nameMap[student.ID] = student.Name
+	}
+
+	names := make([]string, 0, len(studentIDs))
+	for _, studentID := range studentIDs {
+		if nameMap[studentID] == "" {
+			continue
+		}
+		names = append(names, nameMap[studentID])
+	}
+
+	return names, nil
+}
+
+func (s *Service) noticeStudentIDs(rawNoticeID string) ([]uint64, error) {
+	if s.db == nil {
+		rawItem, found := demo.FindNotice(rawNoticeID)
+		if !found {
+			return []uint64{}, nil
+		}
+
+		return noticeStudentIDsFromDemo(rawItem.StudentIDs), nil
+	}
+
+	query := `
+SELECT
+  COALESCE(student_id, 0) AS student_id
+FROM notice_targets
+WHERE notice_id = ?
+  AND target_type = 'student'
+  AND student_id IS NOT NULL
+ORDER BY id ASC
+`
+
+	type noticeStudentRow struct {
+		StudentID uint64 `gorm:"column:student_id"`
+	}
+
+	var rows []noticeStudentRow
+	listErr := s.db.Raw(query, rawNoticeID).Scan(&rows).Error
+	if listErr != nil {
+		if strings.Contains(strings.ToLower(listErr.Error()), "doesn't exist") {
+			return []uint64{}, nil
+		}
+		return nil, listErr
+	}
+
+	studentIDs := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		if row.StudentID == 0 {
+			continue
+		}
+		studentIDs = append(studentIDs, row.StudentID)
+	}
+
+	return studentIDs, nil
+}
+
+func (s *Service) replaceNoticeTargets(noticeID uint64, input NoticePayload) error {
+	if s.db == nil {
+		return nil
+	}
+
+	deleteErr := s.db.Where("notice_id = ?", noticeID).Delete(&edumodel.NoticeTarget{}).Error
+	if deleteErr != nil {
+		return deleteErr
+	}
+
+	targets := make([]edumodel.NoticeTarget, 0, len(input.StudentIDs)+1)
+	now := time.Now()
+
+	if input.RelatedClassID > 0 {
+		classID := input.RelatedClassID
+		targets = append(targets, edumodel.NoticeTarget{
+			NoticeID:   noticeID,
+			TargetType: "class",
+			ClassID:    &classID,
+			CreatedAt:  now,
+		})
+	}
+
+	for _, studentID := range input.StudentIDs {
+		currentStudentID := studentID
+		targets = append(targets, edumodel.NoticeTarget{
+			NoticeID:   noticeID,
+			TargetType: "student",
+			StudentID:  &currentStudentID,
+			CreatedAt:  now,
+		})
+	}
+
+	if len(targets) == 0 {
+		return nil
+	}
+
+	return s.db.Create(&targets).Error
 }
 
 func buildRescheduleNoticeContent(originalItem ScheduleItem, replacementItem ScheduleItem, remark string) string {
@@ -3914,6 +4276,15 @@ func (s *Service) seedIfEmpty() error {
 		noticeErr := tx.Create(&notices).Error
 		if noticeErr != nil {
 			return noticeErr
+		}
+
+		noticeTargets := []edumodel.NoticeTarget{
+			{ID: 1, NoticeID: 3, TargetType: "class", ClassID: &relatedClassID, CreatedAt: now},
+		}
+
+		noticeTargetErr := tx.Create(&noticeTargets).Error
+		if noticeTargetErr != nil {
+			return noticeTargetErr
 		}
 
 		return nil
@@ -4154,6 +4525,7 @@ func noticeItemsFromDemo(source []demo.Notice) []NoticeItem {
 			TargetScope:       item.TargetScope,
 			RelatedClassID:    uint64(item.RelatedClassID),
 			RelatedScheduleID: uint64(item.RelatedScheduleID),
+			StudentIDs:        noticeStudentIDsFromDemo(item.StudentIDs),
 			Status:            item.Status,
 			PublishAt:         item.PublishAt,
 			Author:            item.Author,
@@ -4167,6 +4539,7 @@ func (s *Service) noticeItemsFromDemoWithFilter(filter NoticeFilter) []NoticeIte
 	filteredItems := make([]NoticeItem, 0, len(items))
 	filterDate := strings.TrimSpace(filter.Date)
 	filterStatus := strings.TrimSpace(filter.Status)
+	filterNoticeType := strings.TrimSpace(filter.NoticeType)
 
 	for _, item := range items {
 		if filter.ClassID > 0 && item.RelatedClassID != filter.ClassID {
@@ -4175,7 +4548,15 @@ func (s *Service) noticeItemsFromDemoWithFilter(filter NoticeFilter) []NoticeIte
 		if filterStatus != "" && item.Status != filterStatus {
 			continue
 		}
-		if filterDate != "" && !strings.HasPrefix(item.PublishAt, filterDate) {
+		if filterNoticeType != "" && item.Category != filterNoticeType {
+			continue
+		}
+
+		noticeDate := noticeDateValue(item.PublishAt)
+		if filterDate != "" && noticeDate != filterDate {
+			continue
+		}
+		if !matchesDateRange(noticeDate, filter.DateFrom, filter.DateTo) {
 			continue
 		}
 
@@ -4183,6 +4564,77 @@ func (s *Service) noticeItemsFromDemoWithFilter(filter NoticeFilter) []NoticeIte
 	}
 
 	return filteredItems
+}
+
+func matchesDateRange(targetDate string, dateFrom string, dateTo string) bool {
+	targetDate = strings.TrimSpace(targetDate)
+	dateFrom = strings.TrimSpace(dateFrom)
+	dateTo = strings.TrimSpace(dateTo)
+
+	if targetDate == "" {
+		return dateFrom == "" && dateTo == ""
+	}
+
+	if dateFrom != "" && targetDate < dateFrom {
+		return false
+	}
+
+	if dateTo != "" && targetDate > dateTo {
+		return false
+	}
+
+	return true
+}
+
+func noticeDateValue(rawValue string) string {
+	trimmedValue := strings.TrimSpace(rawValue)
+	if len(trimmedValue) >= len(dateLayout) {
+		return trimmedValue[:len(dateLayout)]
+	}
+
+	return trimmedValue
+}
+
+func cloneNoticeStudentIDs(source []uint64) []uint64 {
+	if len(source) == 0 {
+		return []uint64{}
+	}
+
+	items := make([]uint64, len(source))
+	copy(items, source)
+	return items
+}
+
+func noticeStudentIDsFromDemo(source []int) []uint64 {
+	if len(source) == 0 {
+		return []uint64{}
+	}
+
+	items := make([]uint64, 0, len(source))
+	for _, item := range source {
+		if item <= 0 {
+			continue
+		}
+		items = append(items, uint64(item))
+	}
+
+	return items
+}
+
+func demoNoticeStudentIDs(source []uint64) []int {
+	if len(source) == 0 {
+		return []int{}
+	}
+
+	items := make([]int, 0, len(source))
+	for _, item := range source {
+		if item == 0 {
+			continue
+		}
+		items = append(items, int(item))
+	}
+
+	return items
 }
 
 func noticeTargetItemsFromDemo(source []demo.NoticeTarget) []NoticeTargetItem {
