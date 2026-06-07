@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EditPen, Plus, View } from "@element-plus/icons-vue";
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
@@ -214,6 +215,26 @@ function openTeacherDetail(teacherId: number) {
   void router.push(`/teachers/${teacherId}`);
 }
 
+function teacherInitial(name: string) {
+  const trimmedName = name.trim();
+  if (trimmedName.length === 0) {
+    return "师";
+  }
+
+  return trimmedName.slice(0, 1);
+}
+
+function teacherStatusTagType(status: string) {
+  if (status === "在职") {
+    return "success";
+  }
+  if (status === "排课中") {
+    return "warning";
+  }
+
+  return "info";
+}
+
 onMounted(() => {
   void loadTeachers();
 });
@@ -221,59 +242,49 @@ onMounted(() => {
 
 <template>
   <div class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Faculty Ledger</span>
-        <h2>把老师的科目、职级、校区和授课负载放进一套能直接维护的师资台账里。</h2>
-        <p>
-          现在这页已经不只是盘点视图了。教务和负责人可以直接新增老师、补齐资料、更新状态，把排课前最常用的师资底册先理顺。
-        </p>
-      </div>
-
-      <div class="metric-strip">
-        <article class="metric-tile">
-          <span>老师总数</span>
-          <strong>{{ teachers.length }}</strong>
-          <small>当前系统里已经登记的全部师资</small>
-        </article>
-        <article class="metric-tile">
-          <span>在职人数</span>
-          <strong>{{ activeCount }}</strong>
-          <small>当前可正常安排课程的老师</small>
-        </article>
-        <article class="metric-tile">
-          <span>全职老师</span>
-          <strong>{{ fullTimeCount }}</strong>
-          <small>便于快速识别稳定排班主力</small>
-        </article>
-        <article class="metric-tile">
-          <span>覆盖校区</span>
-          <strong>{{ campusCount }}</strong>
-          <small>看清老师分布是否均衡</small>
-        </article>
-        <article class="metric-tile">
-          <span>周课时合计</span>
-          <strong>{{ totalWeeklyHours }}</strong>
-          <small>帮助判断当前整体授课负载</small>
-        </article>
-      </div>
-    </section>
-
-    <section class="page-card page-card--table">
+    <section class="page-card page-card--table list-card">
       <div class="page-header">
-        <div>
+        <div class="list-card__heading">
           <h2>老师列表</h2>
-          <p class="soft-text">支持筛选、新增和编辑，方便你把师资台账真正维护起来。</p>
+          <span class="list-card__count">共 {{ filteredTeachers.length }} 条</span>
         </div>
         <div class="page-actions">
-          <div class="section-note">师资工作台</div>
-          <el-button v-if="canManageTeachers" type="primary" @click="openCreateDialog">
+          <el-button
+            v-if="canManageTeachers"
+            class="teacher-create-button"
+            :icon="Plus"
+            type="primary"
+            @click="openCreateDialog"
+          >
             新增老师
           </el-button>
         </div>
       </div>
 
-      <div class="page-toolbar">
+      <div class="metric-strip metric-strip--compact list-card__metrics">
+        <article class="metric-tile">
+          <span>老师总数</span>
+          <strong>{{ teachers.length }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>在职人数</span>
+          <strong>{{ activeCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>全职老师</span>
+          <strong>{{ fullTimeCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>覆盖校区</span>
+          <strong>{{ campusCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>周课时合计</span>
+          <strong>{{ totalWeeklyHours }}</strong>
+        </article>
+      </div>
+
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
           <el-input
             v-model="filters.keyword"
@@ -328,45 +339,78 @@ onMounted(() => {
       </div>
 
       <div class="data-table-shell">
-        <el-table v-loading="loading" :data="filteredTeachers" stripe>
-          <el-table-column label="老师" min-width="170">
+        <el-table v-loading="loading" class="teacher-table" :data="filteredTeachers" stripe>
+          <el-table-column label="老师" min-width="240">
             <template #default="{ row }">
-              <div class="table-primary">
-                <el-button link type="primary" @click="openTeacherDetail(row.id)">
-                  {{ row.name }}
-                </el-button>
-                <small>{{ row.title || "未填写职级" }}</small>
+              <div class="teacher-name-cell">
+                <button
+                  class="teacher-avatar-button"
+                  type="button"
+                  :aria-label="`查看${row.name}详情`"
+                  @click="openTeacherDetail(row.id)"
+                >
+                  {{ teacherInitial(row.name) }}
+                </button>
+                <div class="teacher-name-copy">
+                  <button class="teacher-name-link" type="button" @click="openTeacherDetail(row.id)">
+                    {{ row.name }}
+                  </button>
+                  <span>{{ row.title || "未填写职级" }}</span>
+                </div>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="主教科目" prop="mainSubject" width="140" />
-          <el-table-column label="校区" prop="campus" width="120" />
-          <el-table-column label="类型" prop="employmentType" width="110" />
-          <el-table-column label="周课时" prop="weeklyHours" width="100" />
+          <el-table-column label="主教科目" width="140">
+            <template #default="{ row }">
+              <el-tag class="teacher-subject-tag" type="primary">
+                {{ row.mainSubject || "未填写" }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="校区" prop="campus" width="128" />
+          <el-table-column label="类型" prop="employmentType" width="112" />
+          <el-table-column label="周课时" width="104">
+            <template #default="{ row }">
+              <span class="teacher-hours-pill">
+                <strong>{{ row.weeklyHours }}</strong>
+                <span>课时</span>
+              </span>
+            </template>
+          </el-table-column>
           <el-table-column label="手机号" prop="mobile" width="140" />
           <el-table-column label="备注" min-width="220">
             <template #default="{ row }">
-              <span class="muted-cell">{{ row.remark || "暂无备注" }}</span>
+              <span class="muted-cell teacher-note">{{ row.remark || "暂无备注" }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="100">
+          <el-table-column align="center" label="状态" width="104">
             <template #default="{ row }">
-              <el-tag :type="row.status === '在职' ? 'success' : row.status === '排课中' ? 'warning' : 'info'">
+              <el-tag :type="teacherStatusTagType(row.status)">
                 {{ row.status }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" :width="canManageTeachers ? 160 : 120" fixed="right">
+          <el-table-column align="right" label="操作" :width="canManageTeachers ? 178 : 98" fixed="right">
             <template #default="{ row }">
-              <div class="table-link-group">
-                <el-button link type="primary" @click="openTeacherDetail(row.id)">进入详情</el-button>
+              <div class="teacher-action-group">
+                <el-button
+                  class="table-action-button"
+                  :icon="View"
+                  plain
+                  size="small"
+                  @click="openTeacherDetail(row.id)"
+                >
+                  详情
+                </el-button>
                 <el-button
                   v-if="canManageTeachers"
-                  link
-                  type="primary"
+                  class="table-action-button"
+                  :icon="EditPen"
+                  plain
+                  size="small"
                   @click="openEditDialog(row)"
                 >
-                  编辑资料
+                  编辑
                 </el-button>
               </div>
             </template>

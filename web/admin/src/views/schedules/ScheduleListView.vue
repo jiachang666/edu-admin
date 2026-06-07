@@ -380,60 +380,41 @@ onMounted(() => {
 
 <template>
   <div class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">
-          <el-icon><Calendar /></el-icon>
-          Schedule Rail
-        </span>
-        <h2>把新增、改时间、停课和补课收进同一个排课工作台，教务每天就有一条清楚主线。</h2>
-        <p>
-          这页不再只是看列表。我们把排课信息、调整动作和后续签到作业入口都放到一起，方便先处理当天安排，再进入单次课程详情继续跟进。
-        </p>
-      </div>
-
-      <div class="metric-strip">
-        <article class="metric-tile">
-          <span>排课总数</span>
-          <strong>{{ schedules.length }}</strong>
-          <small>当前环境里全部可处理的课程安排</small>
-        </article>
-        <article class="metric-tile">
-          <span>待上课</span>
-          <strong>{{ waitingCount }}</strong>
-          <small>还没到签到环节的课程安排</small>
-        </article>
-        <article class="metric-tile">
-          <span>待签到</span>
-          <strong>{{ pendingCount }}</strong>
-          <small>老师上完课后优先要跟进的场次</small>
-        </article>
-        <article class="metric-tile">
-          <span>已完成</span>
-          <strong>{{ doneCount }}</strong>
-          <small>签到结果已经闭环的课程安排</small>
-        </article>
-        <article class="metric-tile">
-          <span>涉及校区</span>
-          <strong>{{ campusCount }}</strong>
-          <small>方便看本周安排覆盖了多少教学点</small>
-        </article>
-      </div>
-    </section>
-
-    <section class="page-card page-card--table">
+    <section class="page-card page-card--table list-card">
       <div class="page-header">
-        <div>
-          <h2>排课工作台</h2>
-          <p class="soft-text">先筛出目标课程，再直接新建、编辑、调课、停课或补课。</p>
+        <div class="list-card__heading">
+          <h2>排课列表</h2>
+          <span class="list-card__count">共 {{ filteredSchedules.length }} 条</span>
         </div>
         <div class="page-actions">
-          <div class="section-note">单页处理</div>
           <el-button type="primary" @click="openCreateDialog">新建排课</el-button>
         </div>
       </div>
 
-      <div class="page-toolbar">
+      <div class="metric-strip metric-strip--compact list-card__metrics">
+        <article class="metric-tile">
+          <span>排课总数</span>
+          <strong>{{ schedules.length }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>待上课</span>
+          <strong>{{ waitingCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>待签到</span>
+          <strong>{{ pendingCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>已完成</span>
+          <strong>{{ doneCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>涉及校区</span>
+          <strong>{{ campusCount }}</strong>
+        </article>
+      </div>
+
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
           <el-input
             v-model="filters.keyword"
@@ -540,35 +521,6 @@ onMounted(() => {
             </template>
           </el-table-column>
         </el-table>
-      </div>
-    </section>
-
-    <section class="page-card">
-      <div class="page-header">
-        <div>
-          <h2>排课动作说明</h2>
-          <p class="soft-text">把常见动作的处理口径写清楚，减少教务和老师之间来回确认。</p>
-        </div>
-        <div class="section-note">处理规则</div>
-      </div>
-
-      <div class="quick-actions-grid">
-        <button class="quick-action-card" type="button" @click="openCreateDialog">
-          <strong>新增一节课</strong>
-          <span>直接补上一条新的上课安排，适合常规加课、试听课或临时增加课程。</span>
-        </button>
-        <button class="quick-action-card" type="button" @click="router.push('/attendance')">
-          <strong>去签到台</strong>
-          <span>先把今天该点名的班级处理掉，再回来看哪些课需要继续跟进。</span>
-        </button>
-        <button class="quick-action-card" type="button" @click="router.push('/homeworks')">
-          <strong>去课后处理</strong>
-          <span>签到完成后，继续补作业和反馈，让这次课真正形成闭环。</span>
-        </button>
-        <button class="quick-action-card" type="button" @click="router.push('/notices')">
-          <strong>去通知中心</strong>
-          <span>调课、停课后的家长通知，可以直接去消息工作台统一整理和发送。</span>
-        </button>
       </div>
     </section>
 

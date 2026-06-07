@@ -63,7 +63,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	createdItem, createErr := h.service.CreateTeacher(input)
+	createdItem, createErr := h.service.CreateTeacher(input, currentOperator(c))
 	if createErr != nil {
 		response.InternalServerError(c)
 		return
@@ -117,7 +117,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.UpdateTeacher(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.UpdateTeacher(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -183,4 +183,11 @@ func validateTeacherPayload(input eduservice.TeacherPayload) string {
 	}
 
 	return ""
+}
+
+func currentOperator(c *gin.Context) eduservice.Operator {
+	return eduservice.Operator{
+		UserID:      c.GetUint64("current_user_id"),
+		DisplayName: c.GetString("current_user_name"),
+	}
 }

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Calendar, Reading, User } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -114,49 +113,38 @@ onMounted(() => {
 
 <template>
   <div v-loading="loading" class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">
-          <el-icon><User /></el-icon>
-          Teacher Hub
-        </span>
-        <h2>{{ currentTeacher?.name || "老师详情" }}</h2>
-        <p>
-          把老师的基本信息、当前负责班级和最近课程安排集中在一起，教务不用再来回翻老师台账、班级页和排课页。
-        </p>
+    <section class="page-card">
+      <div class="page-header">
+        <div>
+          <h2>{{ currentTeacher?.name || "老师详情" }}</h2>
+          <p class="soft-text">
+            {{ currentTeacher?.mainSubject || "未填写科目" }} ·
+            {{ currentTeacher?.campus || "未填写校区" }} ·
+            {{ currentTeacher?.status || "未填写状态" }}
+          </p>
+        </div>
+        <div class="page-actions">
+          <el-button plain @click="openScheduleList">查看排课总表</el-button>
+        </div>
       </div>
 
-      <div class="metric-strip">
+      <div class="metric-strip metric-strip--compact">
         <article class="metric-tile">
           <span>负责班级</span>
           <strong>{{ currentClasses.length }}</strong>
-          <small>这个老师当前名下可以直接接手的班级数量</small>
         </article>
         <article class="metric-tile">
           <span>开班中</span>
           <strong>{{ runningClassCount }}</strong>
-          <small>正在稳定带课、需要持续跟进的班级数量</small>
         </article>
         <article class="metric-tile">
           <span>近期课程</span>
           <strong>{{ currentSchedules.length }}</strong>
-          <small>已经拉到这页里的最近几次课程安排</small>
         </article>
         <article class="metric-tile">
           <span>待上课</span>
           <strong>{{ upcomingScheduleCount }}</strong>
-          <small>从今天开始往后还需要上课的安排数量</small>
         </article>
-      </div>
-    </section>
-
-    <section class="page-card">
-      <div class="page-header">
-        <div>
-          <h2>基本信息</h2>
-          <p class="soft-text">先确认老师是谁、教什么、现在在哪个校区带课。</p>
-        </div>
-        <div class="section-note">老师档案</div>
       </div>
 
       <div class="detail-info-grid">
@@ -216,11 +204,7 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h2>负责班级</h2>
-            <p class="soft-text">先看这个老师现在主要在带哪些班，方便快速确认业务归属。</p>
-          </div>
-          <div class="section-note">
-            <el-icon><Reading /></el-icon>
-            班级视图
+            <p class="soft-text">当前班级和固定排课会集中显示在这里。</p>
           </div>
         </div>
 
@@ -271,14 +255,7 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h2>近期排课</h2>
-            <p class="soft-text">把最近要上的课放在一起，方便教务快速判断最近谁要进教室。</p>
-          </div>
-          <div class="page-actions">
-            <div class="section-note">
-              <el-icon><Calendar /></el-icon>
-              课程安排
-            </div>
-            <el-button plain @click="openScheduleList">查看排课总表</el-button>
+            <p class="soft-text">最近要上的课会集中显示在这里。</p>
           </div>
         </div>
 

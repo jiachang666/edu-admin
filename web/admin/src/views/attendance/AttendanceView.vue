@@ -330,49 +330,34 @@ onMounted(() => {
 
 <template>
   <div class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Attendance Desk</span>
-        <h2>把今天要点的名、点完后的结果和历史回看，收进同一个更顺手的签到工作台。</h2>
-        <p>
-          这块先围绕“快”来做：先看哪些班还没点名，再在单页里改状态、写备注、保存结果，尽量不让老师和教务在几个页面之间来回跳。
-        </p>
+    <section class="page-card page-card--table list-card">
+      <div class="page-header">
+        <div class="list-card__heading">
+          <h2>签到列表</h2>
+          <span class="list-card__count">共 {{ filteredSessions.length }} 条</span>
+        </div>
       </div>
 
-      <div class="metric-strip">
+      <div class="metric-strip metric-strip--compact list-card__metrics">
         <article class="metric-tile">
           <span>签到场次</span>
           <strong>{{ sessions.length }}</strong>
-          <small>当前演示环境里可回看的全部签到安排</small>
         </article>
         <article class="metric-tile">
           <span>待签到</span>
           <strong>{{ pendingSessionCount }}</strong>
-          <small>优先处理今天还没确认完成的班级</small>
         </article>
         <article class="metric-tile">
           <span>已完成</span>
           <strong>{{ completedSessionCount }}</strong>
-          <small>已经保存过签到结果的课程场次</small>
         </article>
         <article class="metric-tile">
           <span>异常人数</span>
           <strong>{{ leaveCount + absentCount }}</strong>
-          <small>把请假和缺席一起先盯住，方便后续跟进</small>
         </article>
       </div>
-    </section>
 
-    <section class="page-card page-card--table">
-      <div class="page-header">
-        <div>
-          <h2>签到工作台</h2>
-          <p class="soft-text">先找出今天该处理的班级，再直接进入点名明细。</p>
-        </div>
-        <div class="section-note">单页处理</div>
-      </div>
-
-      <div class="page-toolbar">
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
           <el-input
             v-model="filters.keyword"
@@ -444,41 +429,33 @@ onMounted(() => {
             {{ selectedSession.classroom }}
           </p>
         </div>
-        <div class="section-note">
-          {{ selectedSessionLocked ? "未开始" : "可保存" }}
+        <div class="page-actions">
+          <el-tag :type="selectedSessionLocked ? 'info' : 'success'">
+            {{ selectedSessionLocked ? "未开始" : "可保存" }}
+          </el-tag>
         </div>
       </div>
 
-      <div class="metric-strip">
+      <div class="metric-strip metric-strip--compact">
         <article class="metric-tile">
           <span>已到</span>
           <strong>{{ detailSummary.presentCount }}</strong>
-          <small>包含正常到课和补签学员</small>
         </article>
         <article class="metric-tile">
           <span>请假</span>
           <strong>{{ detailSummary.leaveCount }}</strong>
-          <small>可在备注里补充原因</small>
         </article>
         <article class="metric-tile">
           <span>缺席</span>
           <strong>{{ detailSummary.absentCount }}</strong>
-          <small>后续适合班主任继续跟进</small>
         </article>
         <article class="metric-tile">
           <span>待确认</span>
           <strong>{{ detailSummary.pendingCount }}</strong>
-          <small>还没最终落定的签到结果</small>
         </article>
       </div>
 
       <div class="page-toolbar">
-        <div class="toolbar-filters">
-          <span class="soft-text">
-            默认更适合先把少数异常学员改出来，再一次性保存整场签到结果。
-          </span>
-        </div>
-
         <div class="toolbar-actions">
           <el-button plain :disabled="selectedSessionLocked || detailLoading" @click="handleResetPending">
             恢复待确认
@@ -537,16 +514,15 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="page-card page-card--table">
+    <section class="page-card page-card--table list-card">
       <div class="page-header">
-        <div>
-          <h2>签到记录回看</h2>
-          <p class="soft-text">按班级、学员和日期回看历史签到，也能快速跳回对应场次继续更正。</p>
+        <div class="list-card__heading">
+          <h2>签到记录</h2>
+          <span class="list-card__count">共 {{ historyRecords.length }} 条</span>
         </div>
-        <div class="section-note">历史记录</div>
       </div>
 
-      <div class="page-toolbar">
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
           <el-select
             v-model="historyFilters.classId"

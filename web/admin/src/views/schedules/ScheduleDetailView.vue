@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Bell, ChatDotRound, Finished, Reading } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -130,49 +129,39 @@ onMounted(() => {
 
 <template>
   <div v-loading="loading" class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">
-          <el-icon><Reading /></el-icon>
-          Lesson Hub
-        </span>
-        <h2>{{ currentSchedule?.className || "课程安排详情" }}</h2>
-        <p>
-          把这一次具体上课的签到、作业、反馈和相关通知都放到一起，方便老师和教务沿着同一条线接力处理。
-        </p>
+    <section class="page-card">
+      <div class="page-header">
+        <div>
+          <h2>{{ currentSchedule?.className || "课程安排详情" }}</h2>
+          <p class="soft-text">
+            {{ currentSchedule?.courseName || "未填写课程" }} ·
+            {{ currentSchedule?.teacherName || "未填写老师" }} ·
+            {{ currentSchedule?.attendanceStatus || "未填写状态" }}
+          </p>
+        </div>
+        <div class="page-actions">
+          <el-button v-if="currentClass" plain @click="openClassDetail">查看班级</el-button>
+          <el-button plain @click="openSchedules">查看排课</el-button>
+        </div>
       </div>
 
-      <div class="metric-strip">
+      <div class="metric-strip metric-strip--compact">
         <article class="metric-tile">
           <span>当前状态</span>
           <strong>{{ currentSchedule?.attendanceStatus || "-" }}</strong>
-          <small>先判断这节课现在卡在哪个环节</small>
         </article>
         <article class="metric-tile">
           <span>到课人数</span>
           <strong>{{ attendanceSummary?.presentCount ?? 0 }}</strong>
-          <small>已经确认到课或补签的人数</small>
         </article>
         <article class="metric-tile">
           <span>异常人数</span>
           <strong>{{ (attendanceSummary?.leaveCount ?? 0) + (attendanceSummary?.absentCount ?? 0) }}</strong>
-          <small>请假和缺席一起先盯住</small>
         </article>
         <article class="metric-tile">
           <span>关联通知</span>
           <strong>{{ detail?.relatedNotices.length ?? 0 }}</strong>
-          <small>和这个班最近有关的提醒与消息</small>
         </article>
-      </div>
-    </section>
-
-    <section class="page-card">
-      <div class="page-header">
-        <div>
-          <h2>本次课程信息</h2>
-          <p class="soft-text">先把这节课什么时候上、谁来上、在哪上看清楚。</p>
-        </div>
-        <div class="section-note">单次课程</div>
       </div>
 
       <div class="detail-info-grid">
@@ -213,9 +202,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>签到概况</h3>
-            <p class="soft-text">先看这节课还有多少人没确认，是否已经完成签到。</p>
+            <p class="soft-text">这节课的签到结果会集中显示在这里。</p>
           </div>
-          <div class="section-note">Attendance</div>
         </div>
 
         <div class="stats-grid stats-grid--compact">
@@ -259,9 +247,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>课后内容</h3>
-            <p class="soft-text">作业和反馈都围绕这一次课来处理，不再分散在别处。</p>
+            <p class="soft-text">作业和反馈都会围绕这一次课集中处理。</p>
           </div>
-          <div class="section-note">Homework</div>
         </div>
 
         <div class="stack-list">
@@ -289,9 +276,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>到课学员</h3>
-            <p class="soft-text">先确认这节课涉及哪些学员，方便后面跟签到和通知。</p>
+            <p class="soft-text">这节课涉及的学员名单会集中显示在这里。</p>
           </div>
-          <div class="section-note">学生名单</div>
         </div>
 
         <div class="stack-list">
@@ -316,9 +302,11 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>相关通知</h3>
-            <p class="soft-text">这里放和这个班近期有关的通知，方便继续发消息或回看历史。</p>
+            <p class="soft-text">和这个班近期有关的通知会集中显示在这里。</p>
           </div>
-          <div class="section-note">Notice</div>
+          <div class="page-actions">
+            <el-button plain @click="openNotices">进入通知中心</el-button>
+          </div>
         </div>
 
         <div class="stack-list">
@@ -344,36 +332,33 @@ onMounted(() => {
     <section class="page-card">
       <div class="page-header">
         <div>
-          <h2>快捷入口</h2>
-          <p class="soft-text">把这节课最常继续走的几个方向放在一起，减少来回切页。</p>
+          <h2>继续处理</h2>
+          <p class="soft-text">这节课后续常用的处理入口会集中显示在这里。</p>
         </div>
-        <div class="section-note">继续处理</div>
-      </div>
-
-      <div class="quick-actions-grid">
-        <button class="quick-action-card" type="button" @click="openAttendance">
-          <el-icon><Finished /></el-icon>
-          <strong>处理签到</strong>
-          <span>继续去点名、补签或回看这节课的到课情况。</span>
-        </button>
-        <button class="quick-action-card" type="button" @click="openHomework">
-          <el-icon><ChatDotRound /></el-icon>
-          <strong>处理作业反馈</strong>
-          <span>直接继续补作业内容、课堂总结和家长提醒。</span>
-        </button>
-        <button class="quick-action-card" type="button" @click="openClassDetail">
-          <el-icon><Reading /></el-icon>
-          <strong>返回班级中心</strong>
-          <span>回到班级页统一看这个班后续课程、学员和通知。</span>
-        </button>
-        <button class="quick-action-card" type="button" @click="openNotices">
-          <el-icon><Bell /></el-icon>
-          <strong>继续发通知</strong>
-          <span>需要通知家长时，直接去消息工作台整理和发送。</span>
-        </button>
       </div>
 
       <div class="stack-list stack-list--spacious">
+        <article class="stack-item stack-item--stretch">
+          <div>
+            <strong>签到处理</strong>
+            <small>继续去点名、补签或回看这节课的到课情况。</small>
+          </div>
+          <el-button link type="primary" @click="openAttendance">去签到</el-button>
+        </article>
+        <article class="stack-item stack-item--stretch">
+          <div>
+            <strong>作业与反馈</strong>
+            <small>继续补作业内容、课堂总结和家长提醒。</small>
+          </div>
+          <el-button link type="primary" @click="openHomework">去处理</el-button>
+        </article>
+        <article v-if="currentClass" class="stack-item stack-item--stretch">
+          <div>
+            <strong>返回班级</strong>
+            <small>回到班级页统一查看后续课程、学员和通知。</small>
+          </div>
+          <el-button link type="primary" @click="openClassDetail">班级详情</el-button>
+        </article>
         <article class="stack-item stack-item--stretch">
           <div>
             <strong>返回排课总览</strong>

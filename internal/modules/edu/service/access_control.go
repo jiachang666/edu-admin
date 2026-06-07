@@ -25,15 +25,15 @@ const (
 )
 
 var (
-	ErrInvalidCredentials      = errors.New("账号或密码不正确")
-	ErrUserDisabled            = errors.New("账号已停用")
-	ErrUserNotFound            = errors.New("user not found")
-	ErrRoleNotFound            = errors.New("role not found")
-	ErrUsernameAlreadyExists   = errors.New("账号已存在")
-	ErrRoleCodeAlreadyExists   = errors.New("角色编码已存在")
-	ErrInvalidPermissionCodes  = errors.New("存在未识别的权限项")
+	ErrInvalidCredentials       = errors.New("账号或密码不正确")
+	ErrUserDisabled             = errors.New("账号已停用")
+	ErrUserNotFound             = errors.New("user not found")
+	ErrRoleNotFound             = errors.New("role not found")
+	ErrUsernameAlreadyExists    = errors.New("账号已存在")
+	ErrRoleCodeAlreadyExists    = errors.New("角色编码已存在")
+	ErrInvalidPermissionCodes   = errors.New("存在未识别的权限项")
 	ErrCannotDisableCurrentUser = errors.New("不能停用当前登录账号")
-	ErrProtectedRole          = errors.New("内置超级管理员角色不能停用或降权")
+	ErrProtectedRole            = errors.New("内置超级管理员角色不能停用或降权")
 )
 
 type Operator struct {
@@ -42,15 +42,15 @@ type Operator struct {
 }
 
 type AuthProfile struct {
-	ID           uint64   `json:"id"`
-	Username     string   `json:"username"`
-	DisplayName  string   `json:"displayName"`
-	Mobile       string   `json:"mobile"`
-	Status       string   `json:"status"`
-	Roles        []string `json:"roles"`
-	RoleNames    []string `json:"roleNames"`
-	Permissions  []string `json:"permissions"`
-	LastLoginAt  string   `json:"lastLoginAt"`
+	ID          uint64   `json:"id"`
+	Username    string   `json:"username"`
+	DisplayName string   `json:"displayName"`
+	Mobile      string   `json:"mobile"`
+	Status      string   `json:"status"`
+	Roles       []string `json:"roles"`
+	RoleNames   []string `json:"roleNames"`
+	Permissions []string `json:"permissions"`
+	LastLoginAt string   `json:"lastLoginAt"`
 }
 
 type UserRoleItem struct {
@@ -116,22 +116,29 @@ type PermissionGroup struct {
 }
 
 type OperationLogItem struct {
-	ID          uint64 `json:"id"`
-	UserID      uint64 `json:"userId"`
-	UserName    string `json:"userName"`
-	Module      string `json:"module"`
-	Action      string `json:"action"`
-	TargetType  string `json:"targetType"`
-	TargetID    uint64 `json:"targetId"`
-	Content     string `json:"content"`
-	CreatedAt   string `json:"createdAt"`
+	ID         uint64 `json:"id"`
+	UserID     uint64 `json:"userId"`
+	UserName   string `json:"userName"`
+	Module     string `json:"module"`
+	Action     string `json:"action"`
+	TargetType string `json:"targetType"`
+	TargetID   uint64 `json:"targetId"`
+	Content    string `json:"content"`
+	CreatedAt  string `json:"createdAt"`
+}
+
+type OperationLogFilter struct {
+	UserID   uint64
+	Module   string
+	DateFrom string
+	DateTo   string
 }
 
 type userRoleRecord struct {
-	UserID      uint64 `gorm:"column:user_id"`
-	RoleID      uint64 `gorm:"column:role_id"`
-	RoleCode    string `gorm:"column:role_code"`
-	RoleName    string `gorm:"column:role_name"`
+	UserID   uint64 `gorm:"column:user_id"`
+	RoleID   uint64 `gorm:"column:role_id"`
+	RoleCode string `gorm:"column:role_code"`
+	RoleName string `gorm:"column:role_name"`
 }
 
 type roleUserCountRecord struct {
@@ -772,12 +779,36 @@ func (s *Service) SaveRolePermissions(rawID string, payload RolePermissionPayloa
 }
 
 func (s *Service) OperationLogs() ([]OperationLogItem, error) {
+	return s.OperationLogsWithFilter(OperationLogFilter{})
+}
+
+func (s *Service) OperationLogsWithFilter(filter OperationLogFilter) ([]OperationLogItem, error) {
 	if s.db == nil {
 		return []OperationLogItem{}, nil
 	}
 
+	query := s.db.Model(&edumodel.OperationLog{})
+	if filter.UserID > 0 {
+		query = query.Where("user_id = ?", filter.UserID)
+	}
+
+	moduleName := strings.TrimSpace(filter.Module)
+	if moduleName != "" {
+		query = query.Where("module = ?", moduleName)
+	}
+
+	dateFrom := strings.TrimSpace(filter.DateFrom)
+	if dateFrom != "" {
+		query = query.Where("DATE(created_at) >= ?", dateFrom)
+	}
+
+	dateTo := strings.TrimSpace(filter.DateTo)
+	if dateTo != "" {
+		query = query.Where("DATE(created_at) <= ?", dateTo)
+	}
+
 	var logs []edumodel.OperationLog
-	listErr := s.db.Order("id DESC").Find(&logs).Error
+	listErr := query.Order("id DESC").Find(&logs).Error
 	if listErr != nil {
 		return nil, listErr
 	}

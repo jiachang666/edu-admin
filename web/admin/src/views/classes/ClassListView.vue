@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { EditPen, Plus, View } from "@element-plus/icons-vue";
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
@@ -228,6 +229,15 @@ function openDetail(classId: number) {
   void router.push(`/classes/${classId}`);
 }
 
+function classInitial(name: string) {
+  const trimmedName = name.trim();
+  if (trimmedName.length === 0) {
+    return "班";
+  }
+
+  return trimmedName.slice(0, 1);
+}
+
 function classStatusTagType(status: string) {
   switch (status) {
     case "开班中":
@@ -250,54 +260,45 @@ onMounted(() => {
 
 <template>
   <div class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Classroom Matrix</span>
-        <h2>先把班级、课程、老师和开班节奏维护清楚，再进入班级详情继续处理日常动作。</h2>
-        <p>
-          这页现在已经是班级工作台了。可以直接新建班级、调整老师和课程搭配，也能继续进入班级详情处理加人、排课、签到和通知。
-        </p>
-      </div>
-
-      <div class="metric-strip">
-        <article class="metric-tile">
-          <span>班级总数</span>
-          <strong>{{ classes.length }}</strong>
-          <small>当前已经建立的全部班级</small>
-        </article>
-        <article class="metric-tile">
-          <span>开班中</span>
-          <strong>{{ runningCount }}</strong>
-          <small>当前正在正常运转的班级</small>
-        </article>
-        <article class="metric-tile">
-          <span>剩余名额</span>
-          <strong>{{ remainingSeats }}</strong>
-          <small>按容量减去当前人数得到</small>
-        </article>
-        <article class="metric-tile">
-          <span>覆盖校区</span>
-          <strong>{{ campusCount }}</strong>
-          <small>帮助看清班级分布情况</small>
-        </article>
-      </div>
-    </section>
-
-    <section class="page-card page-card--table">
+    <section class="page-card page-card--table list-card">
       <div class="page-header">
-        <div>
+        <div class="list-card__heading">
           <h2>班级列表</h2>
-          <p class="soft-text">支持直接维护班级底册，也能继续进入详情页处理学员和排课。</p>
+          <span class="list-card__count">共 {{ filteredClasses.length }} 条</span>
         </div>
         <div class="page-actions">
-          <div class="section-note">班级工作台</div>
-          <el-button v-if="canManageClasses" type="primary" @click="openCreateDialog">
+          <el-button
+            v-if="canManageClasses"
+            class="class-create-button"
+            :icon="Plus"
+            type="primary"
+            @click="openCreateDialog"
+          >
             新增班级
           </el-button>
         </div>
       </div>
 
-      <div class="page-toolbar">
+      <div class="metric-strip metric-strip--compact list-card__metrics">
+        <article class="metric-tile">
+          <span>班级总数</span>
+          <strong>{{ classes.length }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>开班中</span>
+          <strong>{{ runningCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>剩余名额</span>
+          <strong>{{ remainingSeats }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>覆盖校区</span>
+          <strong>{{ campusCount }}</strong>
+        </article>
+      </div>
+
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
           <el-input
             v-model="filters.keyword"
@@ -351,19 +352,34 @@ onMounted(() => {
       </div>
 
       <div class="data-table-shell">
-        <el-table v-loading="loading" :data="filteredClasses" stripe>
-          <el-table-column label="班级名称" min-width="220">
+        <el-table v-loading="loading" class="class-table" :data="filteredClasses" stripe>
+          <el-table-column label="班级" min-width="260">
             <template #default="{ row }">
-              <div class="table-primary">
-                <el-button link type="primary" @click="openDetail(row.id)">{{ row.name }}</el-button>
-                <small>{{ row.courseName }} · {{ row.teacherName }}</small>
+              <div class="class-name-cell">
+                <button
+                  class="class-avatar-button"
+                  type="button"
+                  :aria-label="`查看${row.name}详情`"
+                  @click="openDetail(row.id)"
+                >
+                  {{ classInitial(row.name) }}
+                </button>
+                <div class="class-name-copy">
+                  <button class="class-name-link" type="button" @click="openDetail(row.id)">
+                    {{ row.name }}
+                  </button>
+                  <span>{{ row.courseName || "未填写课程" }} · {{ row.teacherName || "未安排老师" }}</span>
+                </div>
               </div>
             </template>
           </el-table-column>
           <el-table-column label="校区" prop="campus" width="120" />
-          <el-table-column label="人数" width="100">
+          <el-table-column label="人数" width="112">
             <template #default="{ row }">
-              {{ row.studentCount }}/{{ row.capacity }}
+              <span class="class-capacity-pill">
+                <strong>{{ row.studentCount }}</strong>
+                <span>/ {{ row.capacity }} 人</span>
+              </span>
             </template>
           </el-table-column>
           <el-table-column label="固定排课" prop="weeklySchedule" min-width="180" />
@@ -377,22 +393,32 @@ onMounted(() => {
               <span class="muted-cell">{{ row.remark || "暂无备注" }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="100">
+          <el-table-column align="center" label="状态" width="104">
             <template #default="{ row }">
               <el-tag :type="classStatusTagType(row.status)">{{ row.status }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" :width="canManageClasses ? 160 : 120" fixed="right">
+          <el-table-column align="right" label="操作" :width="canManageClasses ? 178 : 98" fixed="right">
             <template #default="{ row }">
-              <div class="table-link-group">
-                <el-button link type="primary" @click="openDetail(row.id)">进入详情</el-button>
+              <div class="class-action-group">
+                <el-button
+                  class="table-action-button"
+                  :icon="View"
+                  plain
+                  size="small"
+                  @click="openDetail(row.id)"
+                >
+                  详情
+                </el-button>
                 <el-button
                   v-if="canManageClasses"
-                  link
-                  type="primary"
+                  class="table-action-button"
+                  :icon="EditPen"
+                  plain
+                  size="small"
                   @click="openEditDialog(row)"
                 >
-                  编辑资料
+                  编辑
                 </el-button>
               </div>
             </template>

@@ -15,14 +15,15 @@ type Handler struct {
 }
 
 type noticePayload struct {
-	Title             string `json:"title"`
-	Content           string `json:"content"`
-	Category          string `json:"category"`
-	TargetScope       string `json:"targetScope"`
-	RelatedClassID    uint64 `json:"relatedClassId"`
-	RelatedScheduleID uint64 `json:"relatedScheduleId"`
-	Status            string `json:"status"`
-	Author            string `json:"author"`
+	Title             string   `json:"title"`
+	Content           string   `json:"content"`
+	Category          string   `json:"category"`
+	TargetScope       string   `json:"targetScope"`
+	RelatedClassID    uint64   `json:"relatedClassId"`
+	RelatedScheduleID uint64   `json:"relatedScheduleId"`
+	StudentIDs        []uint64 `json:"studentIds"`
+	Status            string   `json:"status"`
+	Author            string   `json:"author"`
 }
 
 func New(service *eduservice.Service) *Handler {
@@ -51,9 +52,12 @@ func (h *Handler) list(c *gin.Context) {
 	}
 
 	notices, noticeErr := h.service.NoticesWithFilter(eduservice.NoticeFilter{
-		ClassID: classID,
-		Status:  strings.TrimSpace(c.Query("status")),
-		Date:    strings.TrimSpace(c.Query("date")),
+		ClassID:    classID,
+		Status:     strings.TrimSpace(c.Query("status")),
+		NoticeType: strings.TrimSpace(c.Query("noticeType")),
+		Date:       strings.TrimSpace(c.Query("date")),
+		DateFrom:   strings.TrimSpace(c.Query("dateFrom")),
+		DateTo:     strings.TrimSpace(c.Query("dateTo")),
 	})
 	if noticeErr != nil {
 		response.InternalServerError(c)
@@ -74,7 +78,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	createdItem, createErr := h.service.CreateNotice(input)
+	createdItem, createErr := h.service.CreateNotice(input, currentOperator(c))
 	if createErr != nil {
 		response.InternalServerError(c)
 		return
@@ -113,7 +117,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.UpdateNotice(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.UpdateNotice(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -132,7 +136,7 @@ func (h *Handler) send(c *gin.Context) {
 		return
 	}
 
-	sentItem, found, sendErr := h.service.SendNotice(c.Param("id"))
+	sentItem, found, sendErr := h.service.SendNotice(c.Param("id"), currentOperator(c))
 	if sendErr != nil {
 		response.InternalServerError(c)
 		return
@@ -175,6 +179,7 @@ func bindNoticePayload(c *gin.Context) (eduservice.NoticePayload, bool) {
 		TargetScope:       strings.TrimSpace(payload.TargetScope),
 		RelatedClassID:    payload.RelatedClassID,
 		RelatedScheduleID: payload.RelatedScheduleID,
+		StudentIDs:        deduplicateNoticeStudentIDs(payload.StudentIDs),
 		Status:            strings.TrimSpace(payload.Status),
 		Author:            strings.TrimSpace(payload.Author),
 	}
@@ -221,4 +226,33 @@ func parseNoticeUintParam(rawValue string) (uint64, error) {
 	}
 
 	return strconv.ParseUint(trimmedValue, 10, 64)
+}
+
+func deduplicateNoticeStudentIDs(source []uint64) []uint64 {
+	if len(source) == 0 {
+		return []uint64{}
+	}
+
+	items := make([]uint64, 0, len(source))
+	seenIDs := make(map[uint64]struct{}, len(source))
+	for _, studentID := range source {
+		if studentID == 0 {
+			continue
+		}
+		if _, exists := seenIDs[studentID]; exists {
+			continue
+		}
+
+		seenIDs[studentID] = struct{}{}
+		items = append(items, studentID)
+	}
+
+	return items
+}
+
+func currentOperator(c *gin.Context) eduservice.Operator {
+	return eduservice.Operator{
+		UserID:      c.GetUint64("current_user_id"),
+		DisplayName: c.GetString("current_user_name"),
+	}
 }

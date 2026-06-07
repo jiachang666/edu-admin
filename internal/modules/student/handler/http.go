@@ -75,7 +75,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
-	createdItem, createErr := h.service.CreateStudent(input)
+	createdItem, createErr := h.service.CreateStudent(input, currentOperator(c))
 	if createErr != nil {
 		response.InternalServerError(c)
 		return
@@ -114,7 +114,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.UpdateStudent(c.Param("id"), input)
+	updatedItem, found, updateErr := h.service.UpdateStudent(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -153,7 +153,7 @@ func (h *Handler) createGuardian(c *gin.Context) {
 		return
 	}
 
-	createdItem, found, createErr := h.service.CreateStudentGuardian(c.Param("id"), input)
+	createdItem, found, createErr := h.service.CreateStudentGuardian(c.Param("id"), input, currentOperator(c))
 	if createErr != nil {
 		response.InternalServerError(c)
 		return
@@ -177,7 +177,7 @@ func (h *Handler) updateGuardian(c *gin.Context) {
 		return
 	}
 
-	updatedItem, found, updateErr := h.service.UpdateStudentGuardian(c.Param("id"), c.Param("guardianId"), input)
+	updatedItem, found, updateErr := h.service.UpdateStudentGuardian(c.Param("id"), c.Param("guardianId"), input, currentOperator(c))
 	if updateErr != nil {
 		response.InternalServerError(c)
 		return
@@ -196,7 +196,7 @@ func (h *Handler) deleteGuardian(c *gin.Context) {
 		return
 	}
 
-	deleted, deleteErr := h.service.DeleteStudentGuardian(c.Param("id"), c.Param("guardianId"))
+	deleted, deleteErr := h.service.DeleteStudentGuardian(c.Param("id"), c.Param("guardianId"), currentOperator(c))
 	if deleteErr != nil {
 		response.InternalServerError(c)
 		return
@@ -302,4 +302,11 @@ func validateGuardianPayload(input eduservice.StudentGuardianPayload) string {
 	}
 
 	return ""
+}
+
+func currentOperator(c *gin.Context) eduservice.Operator {
+	return eduservice.Operator{
+		UserID:      c.GetUint64("current_user_id"),
+		DisplayName: c.GetString("current_user_name"),
+	}
 }

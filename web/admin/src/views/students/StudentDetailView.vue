@@ -346,47 +346,36 @@ onMounted(() => {
 
 <template>
   <div v-loading="loading" class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Student Hub</span>
-        <h2>{{ currentStudent?.name || "学员详情" }}</h2>
-        <p>
-          把一个学员的家长信息、班级归属、最近上课、签到和课后反馈集中在一起，方便老师和教务接力跟进。
-        </p>
-      </div>
-
-      <div class="metric-strip">
-        <article class="metric-tile">
-          <span>当前班级</span>
-          <strong>{{ currentClasses.length }}</strong>
-          <small>这个学员当前仍在读的班级数量</small>
-        </article>
-        <article class="metric-tile">
-          <span>最近课程</span>
-          <strong>{{ studentDetail?.recentSchedules.length ?? 0 }}</strong>
-          <small>最近几次和这个学员相关的上课安排</small>
-        </article>
-        <article class="metric-tile">
-          <span>最近作业</span>
-          <strong>{{ studentDetail?.recentHomeworks.length ?? 0 }}</strong>
-          <small>这个学员所在班级的近期课后作业</small>
-        </article>
-        <article class="metric-tile">
-          <span>剩余课时</span>
-          <strong>{{ currentStudent?.remainingHours ?? 0 }}</strong>
-          <small>方便教务和班主任随手判断续费节奏</small>
-        </article>
-      </div>
-    </section>
-
     <div class="student-detail-grid">
       <section class="page-card">
         <div class="page-header">
           <div>
-            <h2>基本信息</h2>
-            <p class="soft-text">先确认学员是谁、来自哪个校区、当前学习状态怎样。</p>
+            <h2>{{ currentStudent?.name || "学员详情" }}</h2>
+            <p class="soft-text">
+              {{ currentStudent?.grade || "未填写年级" }} ·
+              {{ currentStudent?.campus || "未填写校区" }} ·
+              {{ currentStudent?.status || "未填写状态" }}
+            </p>
           </div>
-          <div class="section-note">学员档案</div>
+        </div>
+
+        <div class="metric-strip metric-strip--compact">
+          <article class="metric-tile">
+            <span>当前班级</span>
+            <strong>{{ currentClasses.length }}</strong>
+          </article>
+          <article class="metric-tile">
+            <span>最近课程</span>
+            <strong>{{ studentDetail?.recentSchedules.length ?? 0 }}</strong>
+          </article>
+          <article class="metric-tile">
+            <span>最近作业</span>
+            <strong>{{ studentDetail?.recentHomeworks.length ?? 0 }}</strong>
+          </article>
+          <article class="metric-tile">
+            <span>剩余课时</span>
+            <strong>{{ currentStudent?.remainingHours ?? 0 }}</strong>
+          </article>
         </div>
 
         <div class="detail-info-grid">
@@ -426,10 +415,9 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h2>家长信息</h2>
-            <p class="soft-text">把主要联系人和备用联系人放在一起，方便随时联系。</p>
+            <p class="soft-text">主要联系人和备用联系人会集中显示在这里。</p>
           </div>
           <div class="page-actions">
-            <div class="section-note">联系人</div>
             <el-button v-if="canManageStudents" type="primary" @click="openGuardianCreateDialog">
               新增家长
             </el-button>
@@ -468,10 +456,9 @@ onMounted(() => {
       <div class="page-header">
         <div>
           <h2>所属班级</h2>
-          <p class="soft-text">可以直接在这里把学员加入班级，或者从某个班级移出。</p>
+          <p class="soft-text">可以直接把学员加入班级，或者从班级移出。</p>
         </div>
         <div class="page-actions">
-          <div class="section-note">班级关系</div>
           <el-button v-if="canManageClasses" type="primary" @click="openJoinClassDialog">
             加入班级
           </el-button>
@@ -520,9 +507,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>最近签到</h3>
-            <p class="soft-text">先看这个学员最近到课、请假和缺席的情况。</p>
+            <p class="soft-text">最近到课、请假和缺席会集中显示在这里。</p>
           </div>
-          <div class="section-note">到课记录</div>
         </div>
 
         <div class="stats-grid stats-grid--compact">
@@ -570,9 +556,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>最近课程</h3>
-            <p class="soft-text">把最近几次上课安排放在一起，方便快速回看。</p>
+            <p class="soft-text">最近几次上课安排会集中显示在这里。</p>
           </div>
-          <div class="section-note">上课安排</div>
         </div>
 
         <div class="stack-list">
@@ -603,9 +588,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>最近作业</h3>
-            <p class="soft-text">最近布置过的作业可以在这里快速回看。</p>
+            <p class="soft-text">最近布置过的作业可以直接回看。</p>
           </div>
-          <div class="section-note">课后作业</div>
         </div>
 
         <div class="stack-list">
@@ -631,9 +615,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>最近反馈</h3>
-            <p class="soft-text">老师最近的课堂反馈和家长提示集中放在这里。</p>
+            <p class="soft-text">老师最近的课堂反馈和家长提示会集中显示在这里。</p>
           </div>
-          <div class="section-note">课后反馈</div>
         </div>
 
         <div class="stack-list">

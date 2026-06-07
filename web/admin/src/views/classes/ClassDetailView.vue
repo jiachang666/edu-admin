@@ -10,7 +10,6 @@ import {
   type AttendanceSession,
   type ClassDetail,
   type Homework,
-  type Notice,
   type Student,
 } from "../../api/education";
 
@@ -157,10 +156,6 @@ function openSchedules() {
   void router.push("/schedules");
 }
 
-function noticeRoute(notice: Notice) {
-  return `/notices`;
-}
-
 function homeworkRoute(homework: Homework) {
   return `/homeworks?scheduleId=${homework.scheduleId}`;
 }
@@ -172,46 +167,39 @@ onMounted(() => {
 
 <template>
   <div v-loading="loading" class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Class Hub</span>
-        <h2>{{ currentClass?.name || "班级详情" }}</h2>
-        <p>
-          把一个班的学员、近期课程、签到结果、作业反馈和通知放到同一页里，老师和教务就不用在几个页面之间来回找。
-        </p>
+    <section class="page-card">
+      <div class="page-header">
+        <div>
+          <h2>{{ currentClass?.name || "班级详情" }}</h2>
+          <p class="soft-text">
+            {{ currentClass?.courseName || "未填写课程" }} ·
+            {{ currentClass?.teacherName || "未填写老师" }} ·
+            {{ currentClass?.campus || "未填写校区" }}
+          </p>
+        </div>
+        <div class="page-actions">
+          <el-button plain @click="openSchedules">查看排课</el-button>
+          <el-button plain @click="openNoticeCenter">查看通知</el-button>
+        </div>
       </div>
 
-      <div class="metric-strip">
+      <div class="metric-strip metric-strip--compact">
         <article class="metric-tile">
           <span>当前人数</span>
           <strong>{{ currentClass?.studentCount ?? 0 }}</strong>
-          <small>班级当前在读学员数量</small>
         </article>
         <article class="metric-tile">
           <span>近期课程</span>
           <strong>{{ classDetail?.upcomingSchedules.length ?? 0 }}</strong>
-          <small>这个班已经安排好的课程数量</small>
         </article>
         <article class="metric-tile">
           <span>最近作业</span>
           <strong>{{ classDetail?.recentHomeworks.length ?? 0 }}</strong>
-          <small>已经和这个班关联的课后作业</small>
         </article>
         <article class="metric-tile">
           <span>关联通知</span>
           <strong>{{ classDetail?.recentNotices.length ?? 0 }}</strong>
-          <small>已经和这个班相关的通知记录</small>
         </article>
-      </div>
-    </section>
-
-    <section class="page-card">
-      <div class="page-header">
-        <div>
-          <h2>基本信息</h2>
-          <p class="soft-text">先把班级、课程、老师和固定排课节奏看清楚。</p>
-        </div>
-        <div class="section-note">班级概览</div>
       </div>
 
       <div class="stats-grid">
@@ -238,10 +226,9 @@ onMounted(() => {
       <div class="page-header">
         <div>
           <h2>学员名单</h2>
-          <p class="soft-text">教务可以直接在这里给班级加人，或者把不再上课的学员移出。</p>
+          <p class="soft-text">可以直接给班级加人，或者把不再上课的学员移出。</p>
         </div>
         <div class="page-actions">
-          <div class="section-note">学员视图</div>
           <el-button type="primary" @click="openAddStudentDialog">添加学员</el-button>
         </div>
       </div>
@@ -267,9 +254,8 @@ onMounted(() => {
       <div class="page-header">
         <div>
           <h2>近期安排</h2>
-          <p class="soft-text">这里是这个班接下来最需要处理的课程安排。</p>
+          <p class="soft-text">接下来最需要处理的课程安排会集中显示在这里。</p>
         </div>
-        <div class="section-note">课程安排</div>
       </div>
 
       <div class="data-table-shell">
@@ -299,9 +285,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>最近签到</h3>
-            <p class="soft-text">先看这个班近期到课、请假和缺席的整体情况。</p>
+            <p class="soft-text">近期到课、请假和缺席的整体情况会集中显示在这里。</p>
           </div>
-          <div class="section-note">签到概况</div>
         </div>
 
         <div class="stats-grid stats-grid--compact">
@@ -342,9 +327,8 @@ onMounted(() => {
         <div class="page-header">
           <div>
             <h3>最近作业反馈</h3>
-            <p class="soft-text">老师上完课后留下的作业和反馈，可以在这里快速回看。</p>
+            <p class="soft-text">老师上完课后留下的作业和反馈可以在这里快速回看。</p>
           </div>
-          <div class="section-note">课后跟进</div>
         </div>
 
         <div class="stack-list">
@@ -367,24 +351,15 @@ onMounted(() => {
       </section>
     </div>
 
-    <section class="page-card">
+    <section class="page-card page-card--table">
       <div class="page-header">
         <div>
-          <h2>快捷操作</h2>
-          <p class="soft-text">把老师和教务最常走的几个入口放到一起，减少来回找页面。</p>
+          <h2>关联通知</h2>
+          <p class="soft-text">和这个班相关的通知会集中显示在这里。</p>
         </div>
-        <div class="section-note">操作入口</div>
-      </div>
-
-      <div class="quick-actions-grid">
-        <button class="quick-action-card" type="button" @click="openSchedules">
-          <strong>查看排课</strong>
-          <span>进入排课页继续处理这个班的课程安排。</span>
-        </button>
-        <button class="quick-action-card" type="button" @click="openNoticeCenter">
-          <strong>进入通知中心</strong>
-          <span>继续整理和这个班相关的调课、停课和日常提醒。</span>
-        </button>
+        <div class="page-actions">
+          <el-button plain @click="openNoticeCenter">进入通知中心</el-button>
+        </div>
       </div>
 
       <div class="stack-list stack-list--spacious">
@@ -397,7 +372,7 @@ onMounted(() => {
             <strong>{{ notice.title }}</strong>
             <small>{{ notice.category }} · {{ notice.status }} · {{ notice.publishAt || "未发送" }}</small>
           </div>
-          <el-button link type="primary" @click="router.push(noticeRoute(notice))">去通知页</el-button>
+          <el-button link type="primary" @click="openNoticeCenter">去通知页</el-button>
         </article>
 
         <div v-if="(classDetail?.recentNotices.length ?? 0) === 0" class="soft-empty">

@@ -4,14 +4,19 @@ import { computed, onMounted, reactive, ref } from "vue";
 import {
   createNotice,
   fetchClassList,
+  fetchNotice,
   fetchNoticeList,
   fetchNoticeTargets,
+  fetchScheduleList,
+  fetchStudentList,
   sendNotice,
   updateNotice,
   type Notice,
   type NoticePayload,
   type NoticeTarget,
+  type Schedule,
   type SchoolClass,
+  type Student,
 } from "../../api/education";
 
 const loading = ref(false);
@@ -23,6 +28,8 @@ const editingNoticeId = ref<number | null>(null);
 const currentTargetTitle = ref("");
 const notices = ref<Notice[]>([]);
 const classOptions = ref<SchoolClass[]>([]);
+const scheduleOptions = ref<Schedule[]>([]);
+const studentOptions = ref<Student[]>([]);
 const noticeTargets = ref<NoticeTarget[]>([]);
 const formRef = ref<FormInstance>();
 
@@ -30,6 +37,8 @@ const filters = reactive({
   keyword: "",
   status: "",
   category: "",
+  classId: null as number | null,
+  dateRange: [] as string[],
 });
 
 const form = reactive<NoticePayload>(defaultForm());
@@ -46,21 +55,57 @@ const rules: FormRules<NoticePayload> = {
   author: [{ required: true, message: "请输入发起人", trigger: "blur" }],
 };
 
+const classNameMap = computed(() => {
+  return new Map(classOptions.value.map((item) => [item.id, item.name]));
+});
+
+const scheduleNameMap = computed(() => {
+  return new Map(
+    scheduleOptions.value.map((item) => [
+      item.id,
+      `${item.lessonDate} ${item.className} ${item.lessonTime}`,
+    ]),
+  );
+});
+
+const studentNameMap = computed(() => {
+  return new Map(studentOptions.value.map((item) => [item.id, item.name]));
+});
+
+const schedulePickerOptions = computed(() => {
+  if (!form.relatedClassId) {
+    return scheduleOptions.value;
+  }
+
+  return scheduleOptions.value.filter((item) => item.classId === form.relatedClassId);
+});
+
+const studentPickerOptions = computed(() => {
+  if (!form.relatedClassId) {
+    return studentOptions.value;
+  }
+
+  return studentOptions.value.filter((item) => item.classId === form.relatedClassId);
+});
+
 const filteredNotices = computed(() => {
   const keyword = filters.keyword.trim().toLowerCase();
 
   return notices.value.filter((notice) => {
     const matchesKeyword =
       keyword.length === 0 ||
-      [notice.title, notice.content, notice.targetScope, notice.author]
+      [notice.title, notice.content, notice.targetScope, notice.author, describeNoticeRelation(notice)]
         .join(" ")
         .toLowerCase()
         .includes(keyword);
     const matchesStatus = filters.status.length === 0 || notice.status === filters.status;
     const matchesCategory =
       filters.category.length === 0 || notice.category === filters.category;
+    const matchesClass =
+      filters.classId === null || notice.relatedClassId === filters.classId;
+    const matchesDate = matchesDateRange(extractDate(notice.publishAt), filters.dateRange);
 
-    return matchesKeyword && matchesStatus && matchesCategory;
+    return matchesKeyword && matchesStatus && matchesCategory && matchesClass && matchesDate;
   });
 });
 
@@ -76,8 +121,8 @@ const draftCount = computed(() => {
   return notices.value.filter((notice) => notice.status === "草稿").length;
 });
 
-const relatedClassCount = computed(() => {
-  return notices.value.filter((notice) => notice.relatedClassId > 0).length;
+const relatedScheduleCount = computed(() => {
+  return notices.value.filter((notice) => notice.relatedScheduleId > 0).length;
 });
 
 const dialogTitle = computed(() => {
@@ -91,9 +136,70 @@ function defaultForm(): NoticePayload {
     category: "校区通知",
     targetScope: "",
     relatedClassId: 0,
+    relatedScheduleId: 0,
+    studentIds: [],
     status: "草稿",
     author: "教务老师",
   };
+}
+
+function extractDate(value: string) {
+  return value.slice(0, 10);
+}
+
+function matchesDateRange(value: string, dateRange: string[]) {
+  if (dateRange.length !== 2) {
+    return true;
+  }
+
+  const [dateFrom, dateTo] = dateRange;
+  if (!dateFrom || !dateTo || value.length === 0) {
+    return true;
+  }
+
+  return value >= dateFrom && value <= dateTo;
+}
+
+function buildStudentScope(studentIds: number[]) {
+  const studentNames = studentIds
+    .map((studentId) => studentNameMap.value.get(studentId) ?? "")
+    .filter(Boolean);
+
+  if (studentNames.length === 0) {
+    return "指定学员家长";
+  }
+
+  if (studentNames.length === 1) {
+    return `${studentNames[0]}家长`;
+  }
+
+  if (studentNames.length === 2) {
+    return `${studentNames[0]}、${studentNames[1]}家长`;
+  }
+
+  return `${studentNames[0]}等${studentNames.length}位学员家长`;
+}
+
+function describeNoticeRelation(notice: Notice) {
+  const relationParts: string[] = [];
+
+  if (notice.relatedClassId > 0) {
+    relationParts.push(classNameMap.value.get(notice.relatedClassId) ?? `班级 #${notice.relatedClassId}`);
+  }
+
+  if (notice.relatedScheduleId > 0) {
+    relationParts.push(scheduleNameMap.value.get(notice.relatedScheduleId) ?? `课程安排 #${notice.relatedScheduleId}`);
+  }
+
+  if (notice.studentIds.length > 0) {
+    relationParts.push(`指定 ${notice.studentIds.length} 位学员`);
+  }
+
+  if (relationParts.length === 0) {
+    return notice.targetScope || "未绑定具体对象";
+  }
+
+  return relationParts.join(" / ");
 }
 
 function resetForm() {
@@ -107,18 +213,27 @@ function openCreateDialog() {
   dialogVisible.value = true;
 }
 
-function openEditDialog(notice: Notice) {
-  editingNoticeId.value = notice.id;
-  Object.assign(form, {
-    title: notice.title,
-    content: notice.content,
-    category: notice.category,
-    targetScope: notice.targetScope,
-    relatedClassId: notice.relatedClassId,
-    status: notice.status,
-    author: notice.author,
-  });
-  dialogVisible.value = true;
+async function openEditDialog(notice: Notice) {
+  try {
+    const detail = await fetchNotice(notice.id);
+    editingNoticeId.value = detail.id;
+    Object.assign(form, {
+      title: detail.title,
+      content: detail.content,
+      category: detail.category,
+      targetScope: detail.targetScope,
+      relatedClassId: detail.relatedClassId,
+      relatedScheduleId: detail.relatedScheduleId,
+      studentIds: [...detail.studentIds],
+      status: detail.status,
+      author: detail.author,
+    });
+    dialogVisible.value = true;
+    formRef.value?.clearValidate();
+  } catch (error) {
+    console.error(error);
+    ElMessage.error("通知详情加载失败");
+  }
 }
 
 function closeDialog() {
@@ -132,7 +247,9 @@ function buildPayload(): NoticePayload {
     content: form.content.trim(),
     category: form.category,
     targetScope: form.targetScope.trim(),
-    relatedClassId: form.relatedClassId,
+    relatedClassId: Number(form.relatedClassId) || 0,
+    relatedScheduleId: Number(form.relatedScheduleId) || 0,
+    studentIds: Array.from(new Set(form.studentIds.map((item) => Number(item)).filter((item) => item > 0))),
     status: form.status,
     author: form.author.trim(),
   };
@@ -153,16 +270,92 @@ function syncTargetScopeFromClass(classId: number) {
   }
 }
 
+function handleClassChange(rawValue: number | string | undefined) {
+  const classId = Number(rawValue || 0);
+  form.relatedClassId = classId;
+
+  if (classId > 0) {
+    form.studentIds = form.studentIds.filter((studentId) => {
+      return studentOptions.value.some((item) => item.id === studentId && item.classId === classId);
+    });
+  }
+
+  if (form.relatedScheduleId > 0) {
+    const relatedSchedule = scheduleOptions.value.find((item) => item.id === form.relatedScheduleId);
+    if (relatedSchedule && relatedSchedule.classId !== classId) {
+      form.relatedScheduleId = 0;
+    }
+  }
+
+  syncTargetScopeFromClass(classId);
+}
+
+function handleScheduleChange(rawValue: number | string | undefined) {
+  const scheduleId = Number(rawValue || 0);
+  form.relatedScheduleId = scheduleId;
+  if (!scheduleId) {
+    return;
+  }
+
+  const relatedSchedule = scheduleOptions.value.find((item) => item.id === scheduleId);
+  if (!relatedSchedule) {
+    return;
+  }
+
+  if (relatedSchedule.classId > 0) {
+    form.relatedClassId = relatedSchedule.classId;
+  }
+
+  if (!form.targetScope.trim()) {
+    form.targetScope = `${relatedSchedule.className}家长群`;
+  }
+}
+
+function handleStudentChange(studentIds: number[]) {
+  form.studentIds = Array.from(new Set(studentIds.map((item) => Number(item)).filter((item) => item > 0)));
+  if (form.studentIds.length === 0) {
+    return;
+  }
+
+  if (!form.targetScope.trim()) {
+    form.targetScope = buildStudentScope(form.studentIds);
+  }
+}
+
+function buildNoticeQuery() {
+  const [dateFrom, dateTo] = filters.dateRange;
+
+  return {
+    classId: filters.classId ?? undefined,
+    status: filters.status || undefined,
+    noticeType: filters.category || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+  };
+}
+
+async function loadNoticeOptions() {
+  try {
+    const [classResult, scheduleResult, studentResult] = await Promise.all([
+      fetchClassList(),
+      fetchScheduleList(),
+      fetchStudentList(),
+    ]);
+    classOptions.value = classResult.list;
+    scheduleOptions.value = scheduleResult.list;
+    studentOptions.value = studentResult.list;
+  } catch (error) {
+    console.error(error);
+    ElMessage.error("通知关联数据加载失败");
+  }
+}
+
 async function loadNotices() {
   loading.value = true;
 
   try {
-    const [noticeResult, classResult] = await Promise.all([
-      fetchNoticeList(),
-      fetchClassList(),
-    ]);
+    const noticeResult = await fetchNoticeList(buildNoticeQuery());
     notices.value = noticeResult.list;
-    classOptions.value = classResult.list;
   } catch (error) {
     console.error(error);
     ElMessage.error("通知列表加载失败");
@@ -233,66 +426,86 @@ async function openTargets(notice: Notice) {
   }
 }
 
-function handleResetFilters() {
+async function handleSearch() {
+  await loadNotices();
+}
+
+async function handleResetFilters() {
   filters.keyword = "";
   filters.status = "";
   filters.category = "";
+  filters.classId = null;
+  filters.dateRange = [];
+  await loadNotices();
 }
 
-onMounted(() => {
-  void loadNotices();
+onMounted(async () => {
+  await Promise.all([loadNoticeOptions(), loadNotices()]);
 });
 </script>
 
 <template>
   <div class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Notice Dispatch</span>
-        <h2>把新建、编辑、发送和影响范围放在同一块通知工作台里，消息才能真正可追踪。</h2>
-        <p>
-          这页现在不只是看列表了。教务和负责人可以直接整理通知内容、确认发送范围，再把调课、停课和日常提醒真正发出去。
-        </p>
-      </div>
-
-      <div class="metric-strip">
-        <article class="metric-tile">
-          <span>通知总数</span>
-          <strong>{{ notices.length }}</strong>
-          <small>当前可回看的全部消息记录</small>
-        </article>
-        <article class="metric-tile">
-          <span>已发送</span>
-          <strong>{{ sentCount }}</strong>
-          <small>已经推送到目标范围的通知</small>
-        </article>
-        <article class="metric-tile">
-          <span>待发送</span>
-          <strong>{{ pendingCount }}</strong>
-          <small>接下来最该优先处理的消息</small>
-        </article>
-        <article class="metric-tile">
-          <span>关联班级</span>
-          <strong>{{ relatedClassCount }}</strong>
-          <small>已经和具体班级绑定的通知数量</small>
-        </article>
-      </div>
-    </section>
-
-    <section class="page-card page-card--table">
+    <section class="page-card page-card--table list-card">
       <div class="page-header">
-        <div>
+        <div class="list-card__heading">
           <h2>通知列表</h2>
-          <p class="soft-text">先确认哪些通知还是草稿，哪些要发送，哪些已经发出并可回看影响范围。</p>
+          <span class="list-card__count">共 {{ filteredNotices.length }} 条</span>
         </div>
         <div class="page-actions">
-          <div class="section-note">通知视图</div>
           <el-button type="primary" @click="openCreateDialog">新建通知</el-button>
         </div>
       </div>
 
-      <div class="page-toolbar">
+      <div class="metric-strip metric-strip--compact list-card__metrics">
+        <article class="metric-tile">
+          <span>通知总数</span>
+          <strong>{{ notices.length }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>已发送</span>
+          <strong>{{ sentCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>待发送</span>
+          <strong>{{ pendingCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>草稿中</span>
+          <strong>{{ draftCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>关联课程</span>
+          <strong>{{ relatedScheduleCount }}</strong>
+        </article>
+      </div>
+
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
+          <el-select
+            v-model="filters.classId"
+            class="toolbar-field"
+            clearable
+            filterable
+            placeholder="按班级查看"
+          >
+            <el-option
+              v-for="item in classOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+          <el-date-picker
+            v-model="filters.dateRange"
+            class="toolbar-field"
+            clearable
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+          />
           <el-input
             v-model="filters.keyword"
             class="toolbar-field"
@@ -326,7 +539,10 @@ onMounted(() => {
             />
           </el-select>
         </div>
-        <el-button @click="handleResetFilters">重置筛选</el-button>
+        <div class="toolbar-actions">
+          <el-button type="primary" @click="handleSearch">筛选结果</el-button>
+          <el-button @click="handleResetFilters">重置筛选</el-button>
+        </div>
       </div>
 
       <div class="data-table-shell">
@@ -340,7 +556,14 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column label="分类" prop="category" width="140" />
-          <el-table-column label="范围" prop="targetScope" min-width="180" />
+          <el-table-column label="关联对象" min-width="220">
+            <template #default="{ row }">
+              <div class="table-primary">
+                <strong>{{ describeNoticeRelation(row) }}</strong>
+                <small>{{ row.targetScope }}</small>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column label="状态" width="120">
             <template #default="{ row }">
               <el-tag :type="row.status === '已发送' ? 'success' : row.status === '草稿' ? 'info' : 'warning'">
@@ -374,7 +597,7 @@ onMounted(() => {
     <el-dialog
       :model-value="dialogVisible"
       :title="dialogTitle"
-      width="680px"
+      width="760px"
       destroy-on-close
       @close="closeDialog"
       @update:model-value="dialogVisible = $event"
@@ -398,8 +621,9 @@ onMounted(() => {
             <el-select
               v-model="form.relatedClassId"
               clearable
+              filterable
               placeholder="不关联具体班级也可以"
-              @change="syncTargetScopeFromClass(Number($event || 0))"
+              @change="handleClassChange"
             >
               <el-option
                 v-for="schoolClass in classOptions"
@@ -419,12 +643,46 @@ onMounted(() => {
               />
             </el-select>
           </el-form-item>
+          <el-form-item class="full-span" label="关联课程安排">
+            <el-select
+              v-model="form.relatedScheduleId"
+              clearable
+              filterable
+              placeholder="把通知和某次具体上课安排绑定起来"
+              @change="handleScheduleChange"
+            >
+              <el-option
+                v-for="item in schedulePickerOptions"
+                :key="item.id"
+                :label="`${item.lessonDate} ${item.className} ${item.lessonTime}`"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item class="full-span" label="指定学员">
+            <el-select
+              v-model="form.studentIds"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="需要单独通知到某几位学员时可以直接选"
+              @change="handleStudentChange"
+            >
+              <el-option
+                v-for="item in studentPickerOptions"
+                :key="item.id"
+                :label="`${item.name} · ${item.className || item.grade}`"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
         </div>
 
         <el-form-item label="通知范围" prop="targetScope">
           <el-input
             v-model="form.targetScope"
-            placeholder="例如：周末奥数提高班家长群 / 全部学员家长 / 待续费学员家长"
+            placeholder="例如：周末奥数提高班家长群 / 全部学员家长 / 指定学员家长"
           />
         </el-form-item>
 
@@ -459,11 +717,7 @@ onMounted(() => {
       <div class="page-stack">
         <section class="page-card notice-target-card">
           <div class="page-header notice-target-card__header">
-            <div>
-              <h3>{{ currentTargetTitle || "通知范围" }}</h3>
-              <p class="soft-text">发错通知时，至少能先知道影响到了谁。</p>
-            </div>
-            <div class="section-note">目标范围</div>
+            <h3>{{ currentTargetTitle || "通知范围" }}</h3>
           </div>
 
           <div v-if="noticeTargets.length === 0" class="soft-empty">

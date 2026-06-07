@@ -202,52 +202,39 @@ onMounted(() => {
 
 <template>
   <div class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Curriculum Board</span>
-        <h2>把课程模板的内容、阶段和授课方式先定清楚，后面的建班和排课才会稳。</h2>
-        <p>
-          这页现在已经不只是展示列表，也能直接新增和编辑课程。先把课程台账做清楚，首版闭环就更像一个真正可用的行业后台。
-        </p>
+    <section class="page-card page-card--table list-card">
+      <div class="page-header">
+        <div class="list-card__heading">
+          <h2>课程列表</h2>
+          <span class="list-card__count">共 {{ courses.length }} 条</span>
+        </div>
+        <div class="page-actions">
+          <el-button v-if="canManageCourses" type="primary" @click="openCreateDialog">
+            新增课程
+          </el-button>
+        </div>
       </div>
 
-      <div class="metric-strip">
+      <div class="metric-strip metric-strip--compact list-card__metrics">
         <article class="metric-tile">
           <span>课程总数</span>
           <strong>{{ courses.length }}</strong>
-          <small>当前系统里的全部课程模板</small>
         </article>
         <article class="metric-tile">
           <span>启用中</span>
           <strong>{{ enabledCount }}</strong>
-          <small>仍然对外开班使用的课程</small>
         </article>
         <article class="metric-tile">
           <span>课程分类</span>
           <strong>{{ categoryCount }}</strong>
-          <small>当前已覆盖的分类数量</small>
         </article>
         <article class="metric-tile">
           <span>关联班级</span>
           <strong>{{ linkedClassCount }}</strong>
-          <small>课程模板目前被班级复用的总次数</small>
         </article>
       </div>
-    </section>
 
-    <section class="page-card page-card--table">
-      <div class="page-header">
-        <div>
-          <h2>课程列表</h2>
-          <p class="soft-text">先把课程模板信息补齐，后面的建班和排课才有清晰基础。</p>
-        </div>
-        <div class="page-actions">
-          <div class="section-note">课程视图</div>
-          <el-button v-if="canManageCourses" type="success" @click="openCreateDialog">新增课程</el-button>
-        </div>
-      </div>
-
-      <div class="page-toolbar">
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
           <el-input
             v-model="filters.keyword"

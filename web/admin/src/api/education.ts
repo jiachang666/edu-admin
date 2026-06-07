@@ -239,6 +239,8 @@ export type Notice = {
   category: string;
   targetScope: string;
   relatedClassId: number;
+  relatedScheduleId: number;
+  studentIds: number[];
   status: string;
   publishAt: string;
   author: string;
@@ -256,6 +258,8 @@ export type NoticePayload = {
   category: string;
   targetScope: string;
   relatedClassId: number;
+  relatedScheduleId: number;
+  studentIds: number[];
   status: string;
   author: string;
 };
@@ -425,6 +429,10 @@ export function fetchUserList() {
   return unwrap<PagedResult<AccessUser>>(http.get("/users"));
 }
 
+export function fetchUserDetail(id: number) {
+  return unwrap<AccessUser>(http.get(`/users/${id}`));
+}
+
 export function createUser(payload: AccessUserPayload) {
   return unwrap<AccessUser>(http.post("/users", payload));
 }
@@ -469,8 +477,13 @@ export function saveRolePermissions(id: number, payload: { permissions: string[]
   return unwrap<AccessRole>(http.put(`/roles/${id}/permissions`, payload));
 }
 
-export function fetchOperationLogList() {
-  return unwrap<PagedResult<OperationLog>>(http.get("/operation-logs"));
+export function fetchOperationLogList(params?: {
+  userId?: number;
+  module?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
+  return unwrap<PagedResult<OperationLog>>(http.get("/operation-logs", { params }));
 }
 
 export function fetchTeacherList() {
@@ -499,6 +512,10 @@ export function fetchCourseList(params?: {
   status?: string;
 }) {
   return unwrap<PagedResult<Course>>(http.get("/courses", { params }));
+}
+
+export function fetchCourseDetail(id: number) {
+  return unwrap<Course>(http.get(`/courses/${id}`));
 }
 
 export function createCourse(payload: CoursePayload) {
@@ -561,6 +578,14 @@ export function fetchClassDetail(classId: number) {
   return unwrap<ClassDetail>(http.get(`/classes/${classId}`));
 }
 
+export function fetchClassStudents(classId: number) {
+  return unwrap<Student[]>(http.get(`/classes/${classId}/students`));
+}
+
+export function fetchClassUpcomingSchedules(classId: number) {
+  return unwrap<Schedule[]>(http.get(`/classes/${classId}/schedules/upcoming`));
+}
+
 export function addStudentsToClass(classId: number, payload: { studentIds: number[] }) {
   return unwrap<{ added: boolean }>(http.post(`/classes/${classId}/students`, payload));
 }
@@ -597,8 +622,15 @@ export function createMakeupLesson(scheduleId: number, payload: ScheduleActionPa
   return unwrap<Schedule>(http.post(`/schedules/${scheduleId}/makeup`, payload));
 }
 
-export function fetchNoticeList() {
-  return unwrap<PagedResult<Notice>>(http.get("/notices"));
+export function fetchNoticeList(params?: {
+  classId?: number;
+  status?: string;
+  noticeType?: string;
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
+  return unwrap<PagedResult<Notice>>(http.get("/notices", { params }));
 }
 
 export function fetchNotice(id: number) {
@@ -646,8 +678,13 @@ export function saveScheduleAttendance(
   return unwrap<{ saved: boolean }>(http.put(`/schedules/${scheduleId}/attendance`, payload));
 }
 
-export function fetchHomeworkList() {
-  return unwrap<PagedResult<Homework>>(http.get("/homeworks"));
+export function fetchHomeworkList(params?: {
+  classId?: number;
+  teacherId?: number;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
+  return unwrap<PagedResult<Homework>>(http.get("/homeworks", { params }));
 }
 
 export function fetchScheduleHomework(scheduleId: number) {
@@ -668,6 +705,15 @@ export function saveScheduleHomework(
 
 export function fetchScheduleFeedback(scheduleId: number) {
   return unwrap<Partial<Feedback>>(http.get(`/schedules/${scheduleId}/feedback`));
+}
+
+export function fetchFeedbackList(params?: {
+  classId?: number;
+  teacherId?: number;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
+  return unwrap<PagedResult<Feedback>>(http.get("/feedbacks", { params }));
 }
 
 export function saveScheduleFeedback(

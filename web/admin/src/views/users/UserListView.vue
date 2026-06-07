@@ -212,54 +212,39 @@ onMounted(() => {
 
 <template>
   <div class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Access Desk</span>
-        <h2>把后台账号、角色归属和最近登录情况收在同一张权限工作台里。</h2>
-        <p>
-          这页优先解决“谁能进系统、现在是什么身份、最近有没有用过”的日常管理问题。对负责人和管理员来说，这会比单纯一张账号表顺手很多。
-        </p>
-      </div>
-
-      <div class="metric-strip">
-        <article class="metric-tile">
-          <span>账号总数</span>
-          <strong>{{ users.length }}</strong>
-          <small>当前系统已登记的全部后台账号</small>
-        </article>
-        <article class="metric-tile">
-          <span>启用账号</span>
-          <strong>{{ enabledCount }}</strong>
-          <small>这些账号可以正常登录后台</small>
-        </article>
-        <article class="metric-tile">
-          <span>停用账号</span>
-          <strong>{{ disabledCount }}</strong>
-          <small>停用后不会再进入系统</small>
-        </article>
-        <article class="metric-tile">
-          <span>有登录记录</span>
-          <strong>{{ recentLoginCount }}</strong>
-          <small>至少登录过一次的账号数量</small>
-        </article>
-      </div>
-    </section>
-
-    <section class="page-card page-card--table">
+    <section class="page-card page-card--table list-card">
       <div class="page-header">
-        <div>
+        <div class="list-card__heading">
           <h2>账号列表</h2>
-          <p class="soft-text">支持快速筛选、新建、编辑和启停账号，方便先把权限底座跑顺。</p>
+          <span class="list-card__count">共 {{ filteredUsers.length }} 条</span>
         </div>
         <div class="page-actions">
-          <div class="section-note">系统权限</div>
           <el-button v-if="canManageUsers" type="primary" @click="openCreateDialog">
             新建账号
           </el-button>
         </div>
       </div>
 
-      <div class="page-toolbar">
+      <div class="metric-strip metric-strip--compact list-card__metrics">
+        <article class="metric-tile">
+          <span>账号总数</span>
+          <strong>{{ users.length }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>启用账号</span>
+          <strong>{{ enabledCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>停用账号</span>
+          <strong>{{ disabledCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>有登录记录</span>
+          <strong>{{ recentLoginCount }}</strong>
+        </article>
+      </div>
+
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
           <el-input v-model="filters.keyword" class="toolbar-field" clearable placeholder="搜索账号、姓名或手机号" />
           <el-select v-model="filters.status" class="toolbar-field" clearable placeholder="全部状态">

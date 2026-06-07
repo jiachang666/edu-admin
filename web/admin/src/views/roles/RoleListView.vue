@@ -222,54 +222,39 @@ onMounted(() => {
 
 <template>
   <div class="page-stack">
-    <section class="page-hero">
-      <div class="page-hero__copy">
-        <span class="section-kicker">Role Matrix</span>
-        <h2>把不同岗位能看什么、能改什么，做成一张更直观的角色权限矩阵。</h2>
-        <p>
-          首版先把常见岗位收敛成几种标准角色，再配合可编辑的权限清单，方便你后面继续往更细的组织结构扩展。
-        </p>
-      </div>
-
-      <div class="metric-strip">
-        <article class="metric-tile">
-          <span>角色总数</span>
-          <strong>{{ roles.length }}</strong>
-          <small>包含内置角色和后续自定义角色</small>
-        </article>
-        <article class="metric-tile">
-          <span>启用角色</span>
-          <strong>{{ enabledCount }}</strong>
-          <small>这些角色当前可以正常分配给账号</small>
-        </article>
-        <article class="metric-tile">
-          <span>自定义角色</span>
-          <strong>{{ customCount }}</strong>
-          <small>代表这套权限模型已经开始适应真实业务</small>
-        </article>
-        <article class="metric-tile">
-          <span>平均权限数</span>
-          <strong>{{ averagePermissionCount }}</strong>
-          <small>能直观看到角色颗粒度是不是过重</small>
-        </article>
-      </div>
-    </section>
-
-    <section class="page-card page-card--table">
+    <section class="page-card page-card--table list-card">
       <div class="page-header">
-        <div>
+        <div class="list-card__heading">
           <h2>角色列表</h2>
-          <p class="soft-text">支持新增角色、维护基础信息，并进入权限配置面板保存菜单和动作范围。</p>
+          <span class="list-card__count">共 {{ filteredRoles.length }} 条</span>
         </div>
         <div class="page-actions">
-          <div class="section-note">权限设计</div>
           <el-button v-if="canManageRoles" type="primary" @click="openCreateDialog">
             新建角色
           </el-button>
         </div>
       </div>
 
-      <div class="page-toolbar">
+      <div class="metric-strip metric-strip--compact list-card__metrics">
+        <article class="metric-tile">
+          <span>角色总数</span>
+          <strong>{{ roles.length }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>启用角色</span>
+          <strong>{{ enabledCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>自定义角色</span>
+          <strong>{{ customCount }}</strong>
+        </article>
+        <article class="metric-tile">
+          <span>平均权限数</span>
+          <strong>{{ averagePermissionCount }}</strong>
+        </article>
+      </div>
+
+      <div class="filter-bar list-card__filters">
         <div class="toolbar-filters">
           <el-input v-model="filters.keyword" class="toolbar-field" clearable placeholder="搜索角色名称、编码或说明" />
           <el-select v-model="filters.status" class="toolbar-field" clearable placeholder="全部状态">

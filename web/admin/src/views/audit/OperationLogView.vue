@@ -1,15 +1,23 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import { computed, onMounted, reactive, ref } from "vue";
-import { fetchOperationLogList, type OperationLog } from "../../api/education";
+import {
+  fetchOperationLogList,
+  fetchUserList,
+  type AccessUser,
+  type OperationLog,
+} from "../../api/education";
 
 const loading = ref(false);
 const logs = ref<OperationLog[]>([]);
+const operators = ref<AccessUser[]>([]);
 
 const filters = reactive({
   keyword: "",
+  userId: null as number | null,
   module: "",
   action: "",
+  dateRange: [] as string[],
 });
 
 const filteredLogs = computed(() => {
@@ -22,10 +30,11 @@ const filteredLogs = computed(() => {
         .join(" ")
         .toLowerCase()
         .includes(keyword);
+    const matchesUser = filters.userId === null || log.userId === filters.userId;
     const matchesModule = filters.module.length === 0 || log.module === filters.module;
     const matchesAction = filters.action.length === 0 || log.action === filters.action;
 
-    return matchesKeyword && matchesModule && matchesAction;
+    return matchesKeyword && matchesUser && matchesModule && matchesAction;
   });
 });
 
@@ -35,10 +44,6 @@ const operatorCount = computed(() => {
 
 const moduleCount = computed(() => {
   return new Set(logs.value.map((log) => log.module)).size;
-});
-
-const loginCount = computed(() => {
-  return logs.value.filter((log) => log.action === "login").length;
 });
 
 const latestLogTime = computed(() => {
@@ -53,11 +58,35 @@ const actionOptions = computed(() => {
   return Array.from(new Set(logs.value.map((log) => log.action)));
 });
 
+const operatorOptions = computed(() => {
+  if (operators.value.length > 0) {
+    return operators.value.map((item) => ({
+      label: item.displayName || item.username,
+      value: item.id,
+    }));
+  }
+
+  return Array.from(
+    new Map(logs.value.map((log) => [log.userId, { label: log.userName, value: log.userId }])).values(),
+  );
+});
+
+function buildLogQuery() {
+  const [dateFrom, dateTo] = filters.dateRange;
+
+  return {
+    userId: filters.userId ?? undefined,
+    module: filters.module || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+  };
+}
+
 async function loadLogs() {
   loading.value = true;
 
   try {
-    const result = await fetchOperationLogList();
+    const result = await fetchOperationLogList(buildLogQuery());
     logs.value = result.list;
   } catch (error) {
     console.error(error);
@@ -67,14 +96,31 @@ async function loadLogs() {
   }
 }
 
+async function loadOperators() {
+  try {
+    const result = await fetchUserList();
+    operators.value = result.list;
+  } catch (error) {
+    console.error(error);
+    operators.value = [];
+  }
+}
+
+function handleSearch() {
+  void loadLogs();
+}
+
 function resetFilters() {
   filters.keyword = "";
+  filters.userId = null;
   filters.module = "";
   filters.action = "";
+  filters.dateRange = [];
+  void loadLogs();
 }
 
 onMounted(() => {
-  void loadLogs();
+  void Promise.all([loadLogs(), loadOperators()]);
 });
 </script>
 
@@ -82,11 +128,7 @@ onMounted(() => {
   <div class="page-stack">
     <section class="page-hero">
       <div class="page-hero__copy">
-        <span class="section-kicker">Audit Trail</span>
-        <h2>把关键动作留下来，后面追问题时才能清楚知道是谁在什么时候做了什么。</h2>
-        <p>
-          首版先覆盖账号、角色和登录这几类关键动作，先把“有迹可查”这条底线建立起来。后面你还可以继续把排课、通知这些业务操作补进来。
-        </p>
+        <h2>操作记录</h2>
       </div>
 
       <div class="metric-strip">
@@ -115,16 +157,25 @@ onMounted(() => {
 
     <section class="page-card page-card--table">
       <div class="page-header">
-        <div>
-          <h2>操作记录列表</h2>
-          <p class="soft-text">可以按模块、动作和关键词筛选，适合定位“谁做了什么”的问题。</p>
-        </div>
-        <div class="section-note">关键留痕</div>
+        <h2>操作记录列表</h2>
       </div>
 
       <div class="page-toolbar">
         <div class="toolbar-filters">
-          <el-input v-model="filters.keyword" class="toolbar-field" clearable placeholder="搜索操作人、说明或对象编号" />
+          <el-select
+            v-model="filters.userId"
+            class="toolbar-field"
+            clearable
+            filterable
+            placeholder="全部操作人"
+          >
+            <el-option
+              v-for="item in operatorOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
           <el-select v-model="filters.module" class="toolbar-field" clearable placeholder="全部模块">
             <el-option
               v-for="module in moduleOptions"
@@ -133,6 +184,22 @@ onMounted(() => {
               :value="module"
             />
           </el-select>
+          <el-date-picker
+            v-model="filters.dateRange"
+            class="toolbar-field"
+            clearable
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+          />
+          <el-input
+            v-model="filters.keyword"
+            class="toolbar-field"
+            clearable
+            placeholder="搜索操作人、说明或对象编号"
+          />
           <el-select v-model="filters.action" class="toolbar-field" clearable placeholder="全部动作">
             <el-option
               v-for="action in actionOptions"
@@ -144,6 +211,7 @@ onMounted(() => {
         </div>
 
         <div class="toolbar-actions">
+          <el-button type="primary" @click="handleSearch">筛选记录</el-button>
           <el-button plain @click="resetFilters">重置筛选</el-button>
         </div>
       </div>
@@ -168,13 +236,6 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="说明" min-width="360" prop="content" />
         </el-table>
-      </div>
-
-      <div class="detail-note">
-        <strong>当前已接入的留痕重点</strong>
-        <p>
-          登录、账号新建编辑启停、角色新建编辑、角色权限保存，这几类动作现在都会自动进入记录里。后续可以继续把排课、停课、补课和通知发送也接进来。
-        </p>
       </div>
     </section>
   </div>
