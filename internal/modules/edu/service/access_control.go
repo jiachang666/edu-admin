@@ -34,6 +34,9 @@ var (
 	ErrInvalidPermissionCodes   = errors.New("存在未识别的权限项")
 	ErrCannotDisableCurrentUser = errors.New("不能停用当前登录账号")
 	ErrProtectedRole            = errors.New("内置超级管理员角色不能停用或降权")
+	ErrTeacherUserNotFound      = errors.New("关联老师账号不存在")
+	ErrTeacherUserRoleInvalid   = errors.New("关联账号不是老师角色")
+	ErrTeacherUserAlreadyBound  = errors.New("关联账号已绑定其他老师")
 )
 
 type Operator struct {
@@ -78,6 +81,12 @@ type UserPayload struct {
 	Mobile      string `json:"mobile"`
 	RoleCode    string `json:"roleCode"`
 	Status      string `json:"status"`
+}
+
+type UserFilter struct {
+	Keyword string
+	Status  string
+	RoleID  uint64
 }
 
 type RoleItem struct {
@@ -130,6 +139,7 @@ type OperationLogItem struct {
 type OperationLogFilter struct {
 	UserID   uint64
 	Module   string
+	Action   string
 	DateFrom string
 	DateTo   string
 }
@@ -312,12 +322,39 @@ func (s *Service) AuthProfileByUserID(userID uint64) (AuthProfile, bool, error) 
 }
 
 func (s *Service) Users() ([]UserItem, error) {
+	return s.UsersWithFilter(UserFilter{})
+}
+
+func (s *Service) UsersWithFilter(filter UserFilter) ([]UserItem, error) {
 	if s.db == nil {
 		return []UserItem{}, nil
 	}
 
+	query := s.db.Model(&edumodel.User{})
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		query = query.Where(
+			"(username LIKE ? OR display_name LIKE ? OR mobile LIKE ?)",
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	if filter.RoleID > 0 {
+		query = query.Joins("JOIN user_roles AS ur_filter ON ur_filter.user_id = users.id").
+			Where("ur_filter.role_id = ?", filter.RoleID)
+	}
+
 	var users []edumodel.User
-	listErr := s.db.Order("id ASC").Find(&users).Error
+	listErr := query.Order("users.id ASC").Find(&users).Error
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -787,26 +824,7 @@ func (s *Service) OperationLogsWithFilter(filter OperationLogFilter) ([]Operatio
 		return []OperationLogItem{}, nil
 	}
 
-	query := s.db.Model(&edumodel.OperationLog{})
-	if filter.UserID > 0 {
-		query = query.Where("user_id = ?", filter.UserID)
-	}
-
-	moduleName := strings.TrimSpace(filter.Module)
-	if moduleName != "" {
-		query = query.Where("module = ?", moduleName)
-	}
-
-	dateFrom := strings.TrimSpace(filter.DateFrom)
-	if dateFrom != "" {
-		query = query.Where("DATE(created_at) >= ?", dateFrom)
-	}
-
-	dateTo := strings.TrimSpace(filter.DateTo)
-	if dateTo != "" {
-		query = query.Where("DATE(created_at) <= ?", dateTo)
-	}
-
+	query := s.operationLogQuery(s.db, filter)
 	var logs []edumodel.OperationLog
 	listErr := query.Order("id DESC").Find(&logs).Error
 	if listErr != nil {
@@ -829,6 +847,35 @@ func (s *Service) OperationLogsWithFilter(filter OperationLogFilter) ([]Operatio
 	}
 
 	return items, nil
+}
+
+func (s *Service) operationLogQuery(base *gorm.DB, filter OperationLogFilter) *gorm.DB {
+	query := base.Model(&edumodel.OperationLog{})
+	if filter.UserID > 0 {
+		query = query.Where("user_id = ?", filter.UserID)
+	}
+
+	moduleName := strings.TrimSpace(filter.Module)
+	if moduleName != "" {
+		query = query.Where("module = ?", moduleName)
+	}
+
+	actionName := strings.TrimSpace(filter.Action)
+	if actionName != "" {
+		query = query.Where("action = ?", actionName)
+	}
+
+	dateFrom := strings.TrimSpace(filter.DateFrom)
+	if dateFrom != "" {
+		query = query.Where("DATE(created_at) >= ?", dateFrom)
+	}
+
+	dateTo := strings.TrimSpace(filter.DateTo)
+	if dateTo != "" {
+		query = query.Where("DATE(created_at) <= ?", dateTo)
+	}
+
+	return query
 }
 
 func (s *Service) seedAccessControlIfEmpty(tx *gorm.DB, now time.Time) error {
@@ -1430,6 +1477,7 @@ func defaultRolePermissions(roleCode string) []string {
 	case "teacher":
 		return uniqueSortedStrings([]string{
 			"dashboard:view",
+			"classes:view",
 			"schedules:view",
 			"attendance:view",
 			"attendance:manage",

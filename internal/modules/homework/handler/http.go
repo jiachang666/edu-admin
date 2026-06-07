@@ -37,6 +37,12 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	classID, classErr := parseHomeworkUintParam(c.Query("classId"))
 	if classErr != nil {
 		response.Failed(c, 400, "class id is invalid")
@@ -54,6 +60,7 @@ func (h *Handler) list(c *gin.Context) {
 		TeacherID: teacherID,
 		DateFrom:  strings.TrimSpace(c.Query("dateFrom")),
 		DateTo:    strings.TrimSpace(c.Query("dateTo")),
+		Scope:     scope,
 	})
 	if itemErr != nil {
 		response.InternalServerError(c)
@@ -66,6 +73,12 @@ func (h *Handler) list(c *gin.Context) {
 func (h *Handler) feedbacks(c *gin.Context) {
 	if !permission.HasFromContext(c, "homeworks:view") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
 		return
 	}
 
@@ -86,6 +99,7 @@ func (h *Handler) feedbacks(c *gin.Context) {
 		TeacherID: teacherID,
 		DateFrom:  strings.TrimSpace(c.Query("dateFrom")),
 		DateTo:    strings.TrimSpace(c.Query("dateTo")),
+		Scope:     scope,
 	})
 	if itemErr != nil {
 		response.InternalServerError(c)

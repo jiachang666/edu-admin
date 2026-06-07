@@ -20,8 +20,19 @@ const (
 	dateTimeLayout           = "2006-01-02 15:04"
 )
 
+var ErrInvalidAttendanceStatus = errors.New("invalid attendance status")
+
+const attendanceRecordSyntheticFactor uint64 = 1000000
+
 type Service struct {
 	db *gorm.DB
+}
+
+type Scope struct {
+	UserID         uint64
+	PrimaryRole    string
+	TeacherID      uint64
+	RestrictToSelf bool
 }
 
 type Option struct {
@@ -31,6 +42,8 @@ type Option struct {
 
 type TeacherItem struct {
 	ID             uint64 `json:"id"`
+	UserID         uint64 `json:"userId" gorm:"column:user_id"`
+	UserName       string `json:"userName" gorm:"column:user_name"`
 	Name           string `json:"name"`
 	Mobile         string `json:"mobile"`
 	Title          string `json:"title"`
@@ -42,13 +55,44 @@ type TeacherItem struct {
 	Remark         string `json:"remark"`
 }
 
+type TeacherFilter struct {
+	Keyword        string
+	Status         string
+	EmploymentType string
+	Campus         string
+}
+
 type CourseFilter struct {
 	Keyword  string
 	Category string
 	Status   string
 }
 
+type StudentFilter struct {
+	Keyword string
+	Status  string
+	ClassID uint64
+}
+
+type ClassFilter struct {
+	Keyword   string
+	Status    string
+	CourseID  uint64
+	TeacherID uint64
+	Scope     Scope
+}
+
+type ScheduleFilter struct {
+	ClassID   uint64
+	TeacherID uint64
+	DateFrom  string
+	DateTo    string
+	Status    string
+	Scope     Scope
+}
+
 type TeacherPayload struct {
+	UserID         uint64
 	Name           string
 	Mobile         string
 	Title          string
@@ -193,6 +237,7 @@ type ClassDetail struct {
 	UpcomingSchedules []ScheduleItem          `json:"upcomingSchedules"`
 	RecentAttendance  []AttendanceSessionItem `json:"recentAttendance"`
 	RecentHomeworks   []HomeworkItem          `json:"recentHomeworks"`
+	RecentFeedbacks   []FeedbackItem          `json:"recentFeedbacks"`
 	RecentNotices     []NoticeItem            `json:"recentNotices"`
 }
 
@@ -297,9 +342,11 @@ type NoticeFilter struct {
 	Date       string
 	DateFrom   string
 	DateTo     string
+	Scope      Scope
 }
 
 type AttendanceItem struct {
+	RecordID     uint64 `json:"recordId"`
 	StudentID    uint64 `json:"studentId"`
 	StudentName  string `json:"studentName"`
 	Grade        string `json:"grade"`
@@ -332,15 +379,20 @@ type AttendanceRecordFilter struct {
 	ClassID   uint64
 	StudentID uint64
 	Date      string
+	DateFrom  string
+	DateTo    string
 	Status    string
+	Scope     Scope
 }
 
 type AttendanceRecordItem struct {
+	ID           uint64 `json:"id"`
 	ScheduleID   uint64 `json:"scheduleId"`
 	ClassID      uint64 `json:"classId"`
 	ClassName    string `json:"className"`
 	StudentID    uint64 `json:"studentId"`
 	StudentName  string `json:"studentName"`
+	TeacherID    uint64 `json:"teacherId"`
 	TeacherName  string `json:"teacherName"`
 	LessonDate   string `json:"lessonDate"`
 	LessonTime   string `json:"lessonTime"`
@@ -359,6 +411,11 @@ type AttendanceSaveItem struct {
 
 type AttendanceSavePayload struct {
 	Items []AttendanceSaveItem `json:"items"`
+}
+
+type AttendanceRecordUpdatePayload struct {
+	Status string `json:"status"`
+	Remark string `json:"remark"`
 }
 
 type HomeworkItem struct {
@@ -387,6 +444,7 @@ type HomeworkFilter struct {
 	TeacherID uint64
 	DateFrom  string
 	DateTo    string
+	Scope     Scope
 }
 
 type FeedbackItem struct {
@@ -415,6 +473,7 @@ type FeedbackFilter struct {
 	TeacherID uint64
 	DateFrom  string
 	DateTo    string
+	Scope     Scope
 }
 
 func New(db *gorm.DB) *Service {
@@ -424,11 +483,6 @@ func New(db *gorm.DB) *Service {
 func (s *Service) Bootstrap(autoSeed bool) error {
 	if s.db == nil {
 		return nil
-	}
-
-	deduplicateErr := s.normalizePostClassUniqueRecords()
-	if deduplicateErr != nil {
-		return deduplicateErr
 	}
 
 	migrateErr := s.db.AutoMigrate(
@@ -460,48 +514,11 @@ func (s *Service) Bootstrap(autoSeed bool) error {
 	return s.seedIfEmpty()
 }
 
-func (s *Service) normalizePostClassUniqueRecords() error {
-	if s.db == nil {
-		return nil
-	}
-
-	homeworkErr := s.normalizeDuplicateRecords("homeworks", "schedule_id")
-	if homeworkErr != nil {
-		return homeworkErr
-	}
-
-	return s.normalizeDuplicateRecords("class_feedbacks", "schedule_id")
-}
-
-func (s *Service) normalizeDuplicateRecords(tableName string, uniqueColumn string) error {
-	query := fmt.Sprintf(`
-SELECT id
-FROM (
-  SELECT
-    id,
-    ROW_NUMBER() OVER (
-      PARTITION BY %s
-      ORDER BY updated_at DESC, created_at DESC, id DESC
-    ) AS row_num
-  FROM %s
-) AS ranked_items
-WHERE ranked_items.row_num > 1
-`, uniqueColumn, tableName)
-
-	var duplicateIDs []uint64
-	scanErr := s.db.Raw(query).Scan(&duplicateIDs).Error
-	if scanErr != nil {
-		return scanErr
-	}
-
-	if len(duplicateIDs) == 0 {
-		return nil
-	}
-
-	return s.db.Table(tableName).Where("id IN ?", duplicateIDs).Delete(nil).Error
-}
-
 func (s *Service) Overview() (map[string]any, error) {
+	return s.OverviewWithScope(Scope{})
+}
+
+func (s *Service) OverviewWithScope(scope Scope) (map[string]any, error) {
 	if s.db == nil {
 		return demo.Overview(), nil
 	}
@@ -518,7 +535,7 @@ func (s *Service) Overview() (map[string]any, error) {
 		return nil, classCountErr
 	}
 
-	attendanceSessions, sessionErr := s.AttendanceSessions()
+	attendanceSessions, sessionErr := s.AttendanceSessionsWithScope(scope)
 	if sessionErr != nil {
 		return nil, sessionErr
 	}
@@ -551,12 +568,20 @@ func (s *Service) Overview() (map[string]any, error) {
 		return nil, pendingActionErr
 	}
 
-	upcomingLessons, scheduleErr := s.Schedules()
+	var draftHomeworkCount int64
+	draftHomeworkErr := s.db.Model(&edumodel.Homework{}).
+		Where("status = ?", "draft").
+		Count(&draftHomeworkCount).Error
+	if draftHomeworkErr != nil {
+		return nil, draftHomeworkErr
+	}
+
+	upcomingLessons, scheduleErr := s.SchedulesWithScope(scope)
 	if scheduleErr != nil {
 		return nil, scheduleErr
 	}
 
-	latestNotices, noticeErr := s.Notices()
+	latestNotices, noticeErr := s.NoticesWithFilter(NoticeFilter{Scope: scope})
 	if noticeErr != nil {
 		return nil, noticeErr
 	}
@@ -569,28 +594,120 @@ func (s *Service) Overview() (map[string]any, error) {
 		latestNotices = latestNotices[:5]
 	}
 
+	pendingItems := make([]map[string]any, 0, 3)
+	if todayPendingCheck > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "attendance",
+			"label": "待签到班级",
+			"count": todayPendingCheck,
+		})
+	}
+	if pendingActionCount > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "notice",
+			"label": "待发送通知",
+			"count": pendingActionCount,
+		})
+	}
+	if draftHomeworkCount > 0 {
+		pendingItems = append(pendingItems, map[string]any{
+			"key":   "homework",
+			"label": "待补作业反馈",
+			"count": draftHomeworkCount,
+		})
+	}
+
 	return map[string]any{
-		"todayCourses":       todayCourses,
-		"todayPendingCheck":  todayPendingCheck,
-		"todayLeaveCount":    todayLeaveCount,
-		"todayAbsentCount":   todayAbsentCount,
-		"studentCount":       studentCount,
-		"classCount":         classCount,
-		"pendingActionCount": pendingActionCount,
-		"upcomingLessons":    upcomingLessons,
-		"latestNotices":      latestNotices,
+		"todayCourses":         todayCourses,
+		"todayPendingCheck":    todayPendingCheck,
+		"todayLeaveCount":      todayLeaveCount,
+		"todayAbsentCount":     todayAbsentCount,
+		"studentCount":         studentCount,
+		"classCount":           classCount,
+		"pendingActionCount":   pendingActionCount,
+		"pendingHomeworkCount": draftHomeworkCount,
+		"pendingItems":         pendingItems,
+		"upcomingLessons":      upcomingLessons,
+		"latestNotices":        latestNotices,
 	}, nil
 }
 
-func (s *Service) Teachers() ([]TeacherItem, error) {
+func (s *Service) ScopeForUser(userID uint64, primaryRole string) (Scope, error) {
+	scope := Scope{
+		UserID:      userID,
+		PrimaryRole: strings.TrimSpace(primaryRole),
+	}
+
+	if scope.UserID == 0 || scope.PrimaryRole != "teacher" {
+		return scope, nil
+	}
+
+	teacherID, found, teacherErr := s.TeacherIDByUserID(scope.UserID)
+	if teacherErr != nil {
+		return Scope{}, teacherErr
+	}
+	if !found {
+		return scope, nil
+	}
+
+	scope.TeacherID = teacherID
+	scope.RestrictToSelf = true
+	return scope, nil
+}
+
+func (s *Service) ScopeAllowsTeacher(scope Scope, teacherID uint64) bool {
+	if !scope.RestrictToSelf {
+		return true
+	}
+
+	return scope.TeacherID > 0 && scope.TeacherID == teacherID
+}
+
+func (s *Service) TeacherIDByUserID(userID uint64) (uint64, bool, error) {
+	if userID == 0 {
+		return 0, false, nil
+	}
+
 	if s.db == nil {
-		return teacherItemsFromDemo(), nil
+		if userID == 4 {
+			return 1, true, nil
+		}
+
+		return 0, false, nil
+	}
+
+	type teacherUserRow struct {
+		ID uint64 `gorm:"column:id"`
+	}
+
+	var row teacherUserRow
+	findErr := s.db.Model(&edumodel.Teacher{}).
+		Select("id").
+		Where("user_id = ?", userID).
+		Limit(1).
+		Scan(&row).Error
+	if findErr != nil {
+		return 0, false, findErr
+	}
+	if row.ID == 0 {
+		return 0, false, nil
+	}
+
+	return row.ID, true, nil
+}
+
+func (s *Service) Teachers() ([]TeacherItem, error) {
+	return s.TeachersWithFilter(TeacherFilter{})
+}
+
+func (s *Service) TeachersWithFilter(filter TeacherFilter) ([]TeacherItem, error) {
+	if s.db == nil {
+		return s.teacherItemsFromDemoWithFilter(filter), nil
 	}
 
 	var items []TeacherItem
-	listErr := s.db.Model(&edumodel.Teacher{}).
-		Select("id, name, mobile, title, main_subject, employment_type, weekly_hours, campus, status, remark").
-		Order("id ASC").
+	listErr := s.teacherQuery(filter).
+		Order("t.id ASC").
 		Scan(&items).Error
 	if listErr != nil {
 		return nil, listErr
@@ -605,9 +722,9 @@ func (s *Service) Teacher(rawID string) (TeacherItem, bool, error) {
 	}
 
 	var item TeacherItem
-	findErr := s.db.Model(&edumodel.Teacher{}).
-		Select("id, name, mobile, title, main_subject, employment_type, weekly_hours, campus, status, remark").
-		Where("id = ?", rawID).
+	findErr := s.teacherQuery(TeacherFilter{}).
+		Where("t.id = ?", rawID).
+		Limit(1).
 		Scan(&item).Error
 	if findErr != nil {
 		return TeacherItem{}, false, findErr
@@ -624,6 +741,8 @@ func (s *Service) CreateTeacher(input TeacherPayload, operator Operator) (Teache
 	if s.db == nil {
 		return TeacherItem{
 			ID:             1,
+			UserID:         input.UserID,
+			UserName:       demoTeacherUserName(input.UserID),
 			Name:           input.Name,
 			Mobile:         input.Mobile,
 			Title:          input.Title,
@@ -636,10 +755,16 @@ func (s *Service) CreateTeacher(input TeacherPayload, operator Operator) (Teache
 		}, nil
 	}
 
-	now := time.Now()
-	var teacher edumodel.Teacher
+	bindErr := s.ensureTeacherUserBinding(input.UserID, 0)
+	if bindErr != nil {
+		return TeacherItem{}, bindErr
+	}
+
+	var createdTeacherID uint64
 	createErr := s.db.Transaction(func(tx *gorm.DB) error {
-		teacher = edumodel.Teacher{
+		now := time.Now()
+		teacher := edumodel.Teacher{
+			UserID:         optionalUint64Pointer(input.UserID),
 			Name:           input.Name,
 			Mobile:         input.Mobile,
 			Title:          input.Title,
@@ -658,37 +783,27 @@ func (s *Service) CreateTeacher(input TeacherPayload, operator Operator) (Teache
 			return createTeacherErr
 		}
 
-		return s.recordOperationTx(
+		createdTeacherID = teacher.ID
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"teachers",
 			"create",
 			"teacher",
 			teacher.ID,
-			fmt.Sprintf("新增老师 %s。", input.Name),
+			fmt.Sprintf("创建老师 %s。", teacher.Name),
 		)
 	})
 	if createErr != nil {
 		return TeacherItem{}, createErr
 	}
 
-	createdItem, found, teacherErr := s.Teacher(fmt.Sprintf("%d", teacher.ID))
+	createdItem, found, teacherErr := s.Teacher(fmt.Sprintf("%d", createdTeacherID))
 	if teacherErr != nil {
 		return TeacherItem{}, teacherErr
 	}
 	if !found {
-		return TeacherItem{
-			ID:             teacher.ID,
-			Name:           teacher.Name,
-			Mobile:         teacher.Mobile,
-			Title:          teacher.Title,
-			MainSubject:    teacher.MainSubject,
-			EmploymentType: teacher.EmploymentType,
-			WeeklyHours:    teacher.WeeklyHours,
-			Campus:         teacher.Campus,
-			Status:         teacher.Status,
-			Remark:         teacher.Remark,
-		}, nil
+		return TeacherItem{ID: createdTeacherID}, nil
 	}
 
 	return createdItem, nil
@@ -710,19 +825,33 @@ func (s *Service) UpdateTeacher(rawID string, input TeacherPayload, operator Ope
 		item.Campus = input.Campus
 		item.Status = input.Status
 		item.Remark = input.Remark
+		item.UserID = input.UserID
+		item.UserName = demoTeacherUserName(input.UserID)
 
 		return item, true, nil
 	}
 
-	teacherID, teacherIDErr := strconv.ParseUint(rawID, 10, 64)
-	if teacherIDErr != nil {
+	teacherID, parseErr := strconv.ParseUint(rawID, 10, 64)
+	if parseErr != nil {
 		return TeacherItem{}, false, nil
 	}
 
+	bindErr := s.ensureTeacherUserBinding(input.UserID, teacherID)
+	if bindErr != nil {
+		return TeacherItem{}, false, bindErr
+	}
+
 	updateErr := s.db.Transaction(func(tx *gorm.DB) error {
+		var teacher edumodel.Teacher
+		findTeacherErr := tx.Where("id = ?", teacherID).Take(&teacher).Error
+		if findTeacherErr != nil {
+			return findTeacherErr
+		}
+
 		updateResult := tx.Model(&edumodel.Teacher{}).
 			Where("id = ?", teacherID).
 			Updates(map[string]any{
+				"user_id":         optionalUint64Pointer(input.UserID),
 				"name":            input.Name,
 				"mobile":          input.Mobile,
 				"title":           input.Title,
@@ -741,14 +870,14 @@ func (s *Service) UpdateTeacher(rawID string, input TeacherPayload, operator Ope
 			return gorm.ErrRecordNotFound
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"teachers",
 			"update",
 			"teacher",
 			teacherID,
-			fmt.Sprintf("编辑老师 %s。", input.Name),
+			fmt.Sprintf("更新老师 %s 的资料。", input.Name),
 		)
 	})
 	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
@@ -905,9 +1034,10 @@ func (s *Service) CreateCourse(input CoursePayload, operator Operator) (CourseIt
 		return courseItemFromPayload(1, input), nil
 	}
 
-	var course edumodel.Course
+	var createdCourseID uint64
 	createErr := s.db.Transaction(func(tx *gorm.DB) error {
-		course = edumodel.Course{
+		now := time.Now()
+		course := edumodel.Course{
 			Name:                  input.Name,
 			Category:              input.Category,
 			Description:           input.Description,
@@ -916,6 +1046,8 @@ func (s *Service) CreateCourse(input CoursePayload, operator Operator) (CourseIt
 			TotalLessons:          input.TotalLessons,
 			DeliveryType:          input.DeliveryType,
 			Status:                input.Status,
+			CreatedAt:             now,
+			UpdatedAt:             now,
 		}
 
 		createCourseErr := tx.Create(&course).Error
@@ -923,26 +1055,27 @@ func (s *Service) CreateCourse(input CoursePayload, operator Operator) (CourseIt
 			return createCourseErr
 		}
 
-		return s.recordOperationTx(
+		createdCourseID = course.ID
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"courses",
 			"create",
 			"course",
 			course.ID,
-			fmt.Sprintf("新增课程 %s。", input.Name),
+			fmt.Sprintf("创建课程 %s。", course.Name),
 		)
 	})
 	if createErr != nil {
 		return CourseItem{}, createErr
 	}
 
-	createdItem, found, detailErr := s.Course(fmt.Sprintf("%d", course.ID))
+	createdItem, found, detailErr := s.Course(fmt.Sprintf("%d", createdCourseID))
 	if detailErr != nil {
 		return CourseItem{}, detailErr
 	}
 	if !found {
-		return courseItemFromPayload(course.ID, input), nil
+		return courseItemFromPayload(createdCourseID, input), nil
 	}
 
 	return createdItem, nil
@@ -967,23 +1100,30 @@ func (s *Service) UpdateCourse(rawID string, input CoursePayload, operator Opera
 		return item, true, nil
 	}
 
-	courseID, courseIDErr := strconv.ParseUint(rawID, 10, 64)
-	if courseIDErr != nil {
+	courseID, parseErr := strconv.ParseUint(rawID, 10, 64)
+	if parseErr != nil {
 		return CourseItem{}, false, nil
 	}
 
-	updateValues := map[string]any{
-		"name":                    input.Name,
-		"category":                input.Category,
-		"description":             input.Description,
-		"age_range":               input.AgeRange,
-		"lesson_duration_minutes": input.LessonDurationMinutes,
-		"total_lessons":           input.TotalLessons,
-		"delivery_type":           input.DeliveryType,
-		"status":                  input.Status,
-	}
-
 	updateErr := s.db.Transaction(func(tx *gorm.DB) error {
+		var course edumodel.Course
+		findCourseErr := tx.Where("id = ?", courseID).Take(&course).Error
+		if findCourseErr != nil {
+			return findCourseErr
+		}
+
+		updateValues := map[string]any{
+			"name":                    input.Name,
+			"category":                input.Category,
+			"description":             input.Description,
+			"age_range":               input.AgeRange,
+			"lesson_duration_minutes": input.LessonDurationMinutes,
+			"total_lessons":           input.TotalLessons,
+			"delivery_type":           input.DeliveryType,
+			"status":                  input.Status,
+			"updated_at":              time.Now(),
+		}
+
 		updateResult := tx.Model(&edumodel.Course{}).
 			Where("id = ?", courseID).
 			Updates(updateValues)
@@ -994,14 +1134,14 @@ func (s *Service) UpdateCourse(rawID string, input CoursePayload, operator Opera
 			return gorm.ErrRecordNotFound
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"courses",
 			"update",
 			"course",
 			courseID,
-			fmt.Sprintf("编辑课程 %s。", input.Name),
+			fmt.Sprintf("更新课程 %s。", input.Name),
 		)
 	})
 	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
@@ -1020,39 +1160,18 @@ func (s *Service) UpdateCourse(rawID string, input CoursePayload, operator Opera
 }
 
 func (s *Service) Students() ([]StudentItem, error) {
+	return s.StudentsWithFilter(StudentFilter{})
+}
+
+func (s *Service) StudentsWithFilter(filter StudentFilter) ([]StudentItem, error) {
 	if s.db == nil {
-		return studentItemsFromDemo(), nil
+		return s.studentItemsFromDemoWithFilter(filter), nil
 	}
 
-	query := `
-SELECT
-  s.id,
-  s.name,
-  s.grade_name AS grade,
-  COALESCE(g.name, '') AS parent_name,
-  COALESCE(g.mobile, '') AS parent_mobile,
-  s.campus,
-  COALESCE(cs.class_id, 0) AS class_id,
-  COALESCE(c.name, '') AS class_name,
-  s.remaining_hours,
-  s.status
-FROM students AS s
-LEFT JOIN student_guardians AS g
-  ON g.student_id = s.id AND g.is_primary = 1
-LEFT JOIN (
-  SELECT student_id, MIN(class_id) AS class_id
-  FROM class_students
-  WHERE status = ?
-  GROUP BY student_id
-) AS cs
-  ON cs.student_id = s.id
-LEFT JOIN classes AS c
-  ON c.id = cs.class_id
-ORDER BY s.id ASC
-`
-
 	var items []StudentItem
-	listErr := s.db.Raw(query, activeClassStudentStatus).Scan(&items).Error
+	listErr := s.studentQuery(filter).
+		Order("s.id ASC").
+		Scan(&items).Error
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -1191,14 +1310,14 @@ func (s *Service) CreateStudent(input StudentPayload, operator Operator) (Studen
 		}
 
 		createdStudentID = student.ID
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"students",
 			"create",
 			"student",
 			student.ID,
-			fmt.Sprintf("新增学员 %s。", input.Name),
+			fmt.Sprintf("新增学员 %s。", student.Name),
 		)
 	})
 	if createErr != nil {
@@ -1271,31 +1390,42 @@ func (s *Service) UpdateStudent(rawID string, input StudentPayload, operator Ope
 			if createGuardianErr != nil {
 				return createGuardianErr
 			}
-		} else if findGuardianErr != nil {
+
+			return s.recordBusinessOperationTx(
+				tx,
+				operator,
+				"students",
+				"update",
+				"student",
+				studentID,
+				fmt.Sprintf("更新学员 %s。", input.Name),
+			)
+		}
+		if findGuardianErr != nil {
 			return findGuardianErr
-		} else {
-			updateGuardianErr := tx.Model(&edumodel.StudentGuardian{}).
-				Where("id = ?", primaryGuardian.ID).
-				Updates(map[string]any{
-					"name":       input.GuardianName,
-					"relation":   input.GuardianRelation,
-					"mobile":     input.GuardianMobile,
-					"is_primary": true,
-					"updated_at": time.Now(),
-				}).Error
-			if updateGuardianErr != nil {
-				return updateGuardianErr
-			}
 		}
 
-		return s.recordOperationTx(
+		updateGuardianErr := tx.Model(&edumodel.StudentGuardian{}).
+			Where("id = ?", primaryGuardian.ID).
+			Updates(map[string]any{
+				"name":       input.GuardianName,
+				"relation":   input.GuardianRelation,
+				"mobile":     input.GuardianMobile,
+				"is_primary": true,
+				"updated_at": time.Now(),
+			}).Error
+		if updateGuardianErr != nil {
+			return updateGuardianErr
+		}
+
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"students",
 			"update",
 			"student",
 			studentID,
-			fmt.Sprintf("编辑学员 %s。", input.Name),
+			fmt.Sprintf("更新学员 %s。", input.Name),
 		)
 	})
 	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
@@ -1356,14 +1486,14 @@ func (s *Service) CreateStudentGuardian(rawStudentID string, input StudentGuardi
 			return createGuardianErr
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"students",
 			"create_guardian",
-			"student",
-			studentID,
-			fmt.Sprintf("为学员 %s 新增家长联系人 %s。", student.Name, input.Name),
+			"guardian",
+			createdGuardian.ID,
+			fmt.Sprintf("为学员 %s 新增家长联系人 %s。", student.Name, createdGuardian.Name),
 		)
 	})
 	if errors.Is(createErr, gorm.ErrRecordNotFound) {
@@ -1426,14 +1556,22 @@ func (s *Service) UpdateStudentGuardian(rawStudentID string, rawGuardianID strin
 			return updateGuardianErr
 		}
 
-		return s.recordOperationTx(
+		studentItem, found, studentErr := s.Student(rawStudentID)
+		if studentErr != nil {
+			return studentErr
+		}
+		if !found {
+			return gorm.ErrRecordNotFound
+		}
+
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"students",
 			"update_guardian",
-			"student",
-			studentID,
-			fmt.Sprintf("更新学员家长联系人 %s。", input.Name),
+			"guardian",
+			guardianID,
+			fmt.Sprintf("更新学员 %s 的家长联系人 %s。", studentItem.Name, input.Name),
 		)
 	})
 	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
@@ -1485,12 +1623,12 @@ func (s *Service) DeleteStudentGuardian(rawStudentID string, rawGuardianID strin
 		var targetFound bool
 		var removedPrimary bool
 		var fallbackGuardianID uint64
-		var targetGuardianName string
+		var removedGuardianName string
 		for _, guardian := range guardians {
 			if guardian.ID == guardianID {
 				targetFound = true
 				removedPrimary = guardian.IsPrimary
-				targetGuardianName = guardian.Name
+				removedGuardianName = guardian.Name
 				continue
 			}
 			if fallbackGuardianID == 0 {
@@ -1509,24 +1647,34 @@ func (s *Service) DeleteStudentGuardian(rawStudentID string, rawGuardianID strin
 			return gorm.ErrRecordNotFound
 		}
 
-		if removedPrimary && fallbackGuardianID > 0 {
-			updatePrimaryErr := tx.Model(&edumodel.StudentGuardian{}).
-				Where("id = ?", fallbackGuardianID).
-				Update("is_primary", true).Error
-			if updatePrimaryErr != nil {
-				return updatePrimaryErr
-			}
+		studentItem, found, studentErr := s.Student(rawStudentID)
+		if studentErr != nil {
+			return studentErr
+		}
+		if !found {
+			return gorm.ErrRecordNotFound
 		}
 
-		return s.recordOperationTx(
+		recordErr := s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"students",
 			"delete_guardian",
-			"student",
-			studentID,
-			fmt.Sprintf("删除学员家长联系人 %s。", targetGuardianName),
+			"guardian",
+			guardianID,
+			fmt.Sprintf("删除学员 %s 的家长联系人 %s。", studentItem.Name, removedGuardianName),
 		)
+		if recordErr != nil {
+			return recordErr
+		}
+
+		if removedPrimary && fallbackGuardianID > 0 {
+			return tx.Model(&edumodel.StudentGuardian{}).
+				Where("id = ?", fallbackGuardianID).
+				Update("is_primary", true).Error
+		}
+
+		return nil
 	})
 	if errors.Is(deleteErr, gorm.ErrRecordNotFound) {
 		return false, nil
@@ -1745,54 +1893,18 @@ ORDER BY c.id ASC
 }
 
 func (s *Service) Classes() ([]ClassItem, error) {
+	return s.ClassesWithFilter(ClassFilter{})
+}
+
+func (s *Service) ClassesWithFilter(filter ClassFilter) ([]ClassItem, error) {
 	if s.db == nil {
-		return classItemsFromDemo(demo.Classes()), nil
+		return s.classItemsFromDemoWithFilter(filter), nil
 	}
 
-	query := `
-SELECT
-  c.id,
-  c.course_id,
-  c.name,
-  COALESCE(co.name, '') AS course_name,
-  c.teacher_id,
-  COALESCE(t.name, '') AS teacher_name,
-  c.campus,
-  COUNT(cs.id) AS student_count,
-  c.capacity,
-  c.weekly_schedule,
-  COALESCE(DATE_FORMAT(c.start_date, '%Y-%m-%d'), '') AS start_date,
-  COALESCE(DATE_FORMAT(c.end_date, '%Y-%m-%d'), '') AS end_date,
-  c.status
-  ,
-  COALESCE(c.remark, '') AS remark
-FROM classes AS c
-LEFT JOIN courses AS co
-  ON co.id = c.course_id
-LEFT JOIN teachers AS t
-  ON t.id = c.teacher_id
-LEFT JOIN class_students AS cs
-  ON cs.class_id = c.id AND cs.status = ?
-GROUP BY
-  c.id,
-  c.course_id,
-  c.name,
-  co.name,
-  c.teacher_id,
-  t.name,
-  c.campus,
-  c.capacity,
-  c.weekly_schedule,
-  c.start_date,
-  c.end_date,
-  c.status
-  ,
-  c.remark
-ORDER BY c.id ASC
-`
-
 	var items []ClassItem
-	listErr := s.db.Raw(query, activeClassStudentStatus).Scan(&items).Error
+	listErr := s.classQuery(filter).
+		Order("c.id ASC").
+		Scan(&items).Error
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -1871,10 +1983,10 @@ func (s *Service) CreateClass(input ClassPayload, operator Operator) (ClassItem,
 		return ClassItem{}, parseErr
 	}
 
-	now := time.Now()
-	var classItem edumodel.Class
+	var createdClassID uint64
 	createErr := s.db.Transaction(func(tx *gorm.DB) error {
-		classItem = edumodel.Class{
+		now := time.Now()
+		classItem := edumodel.Class{
 			Name:           input.Name,
 			CourseID:       input.CourseID,
 			TeacherID:      input.TeacherID,
@@ -1894,21 +2006,22 @@ func (s *Service) CreateClass(input ClassPayload, operator Operator) (ClassItem,
 			return createClassErr
 		}
 
-		return s.recordOperationTx(
+		createdClassID = classItem.ID
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"classes",
 			"create",
 			"class",
 			classItem.ID,
-			fmt.Sprintf("新增班级 %s。", input.Name),
+			fmt.Sprintf("新建班级 %s。", classItem.Name),
 		)
 	})
 	if createErr != nil {
 		return ClassItem{}, createErr
 	}
 
-	createdItem, found, classErr := s.Class(fmt.Sprintf("%d", classItem.ID))
+	createdItem, found, classErr := s.Class(fmt.Sprintf("%d", createdClassID))
 	if classErr != nil {
 		return ClassItem{}, classErr
 	}
@@ -1929,12 +2042,18 @@ func (s *Service) UpdateClass(rawID string, input ClassPayload, operator Operato
 		return ClassItem{}, false, parseErr
 	}
 
-	classID, classIDErr := strconv.ParseUint(rawID, 10, 64)
-	if classIDErr != nil {
+	classID, parseErr := strconv.ParseUint(rawID, 10, 64)
+	if parseErr != nil {
 		return ClassItem{}, false, nil
 	}
 
 	updateErr := s.db.Transaction(func(tx *gorm.DB) error {
+		var classItem edumodel.Class
+		findClassErr := tx.Where("id = ?", classID).Take(&classItem).Error
+		if findClassErr != nil {
+			return findClassErr
+		}
+
 		updateResult := tx.Model(&edumodel.Class{}).
 			Where("id = ?", classID).
 			Updates(map[string]any{
@@ -1957,14 +2076,14 @@ func (s *Service) UpdateClass(rawID string, input ClassPayload, operator Operato
 			return gorm.ErrRecordNotFound
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"classes",
 			"update",
 			"class",
 			classID,
-			fmt.Sprintf("编辑班级 %s。", input.Name),
+			fmt.Sprintf("更新班级 %s。", input.Name),
 		)
 	})
 	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
@@ -2020,6 +2139,8 @@ ORDER BY s.id ASC
 }
 
 func (s *Service) ClassDetail(rawClassID string) (ClassDetail, bool, error) {
+	const recentItemLimit = 4
+
 	classItem, found, classErr := s.Class(rawClassID)
 	if classErr != nil {
 		return ClassDetail{}, false, classErr
@@ -2033,60 +2154,43 @@ func (s *Service) ClassDetail(rawClassID string) (ClassDetail, bool, error) {
 		return ClassDetail{}, false, studentErr
 	}
 
-	upcomingSchedules, scheduleErr := s.UpcomingSchedules(rawClassID)
+	classSchedules, scheduleErr := s.classSchedules(rawClassID)
 	if scheduleErr != nil {
 		return ClassDetail{}, false, scheduleErr
 	}
 
-	recentAttendance := make([]AttendanceSessionItem, 0, len(upcomingSchedules))
-	for _, scheduleItem := range upcomingSchedules {
-		attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
-		if attendanceErr != nil {
-			return ClassDetail{}, false, attendanceErr
-		}
-
-		presentCount, leaveCount, absentCount, pendingCount := summarizeAttendanceItems(attendanceItems)
-		recentAttendance = append(recentAttendance, AttendanceSessionItem{
-			ID:               scheduleItem.ID,
-			ClassID:          scheduleItem.ClassID,
-			ClassName:        scheduleItem.ClassName,
-			CourseName:       scheduleItem.CourseName,
-			TeacherName:      scheduleItem.TeacherName,
-			Campus:           scheduleItem.Campus,
-			Classroom:        scheduleItem.Classroom,
-			LessonDate:       scheduleItem.LessonDate,
-			LessonTime:       scheduleItem.LessonTime,
-			AttendanceStatus: sessionAttendanceStatus(scheduleItem.AttendanceStatus, pendingCount),
-			StudentCount:     len(attendanceItems),
-			PresentCount:     presentCount,
-			LeaveCount:       leaveCount,
-			AbsentCount:      absentCount,
-			PendingCount:     pendingCount,
-		})
+	upcomingSchedules, upcomingErr := s.UpcomingSchedules(rawClassID)
+	if upcomingErr != nil {
+		return ClassDetail{}, false, upcomingErr
 	}
 
-	homeworks, homeworkErr := s.Homeworks()
+	recentAttendance, attendanceErr := s.recentAttendanceSessions(classSchedules, recentItemLimit)
+	if attendanceErr != nil {
+		return ClassDetail{}, false, attendanceErr
+	}
+
+	recentHomeworks, homeworkErr := s.HomeworksWithFilter(HomeworkFilter{ClassID: classItem.ID})
 	if homeworkErr != nil {
 		return ClassDetail{}, false, homeworkErr
 	}
-
-	recentHomeworks := make([]HomeworkItem, 0, len(homeworks))
-	for _, item := range homeworks {
-		if item.ClassID == classItem.ID {
-			recentHomeworks = append(recentHomeworks, item)
-		}
+	if len(recentHomeworks) > recentItemLimit {
+		recentHomeworks = recentHomeworks[:recentItemLimit]
 	}
 
-	notices, noticeErr := s.Notices()
+	recentFeedbacks, feedbackErr := s.FeedbacksWithFilter(FeedbackFilter{ClassID: classItem.ID})
+	if feedbackErr != nil {
+		return ClassDetail{}, false, feedbackErr
+	}
+	if len(recentFeedbacks) > recentItemLimit {
+		recentFeedbacks = recentFeedbacks[:recentItemLimit]
+	}
+
+	recentNotices, noticeErr := s.NoticesWithFilter(NoticeFilter{ClassID: classItem.ID})
 	if noticeErr != nil {
 		return ClassDetail{}, false, noticeErr
 	}
-
-	recentNotices := make([]NoticeItem, 0, len(notices))
-	for _, item := range notices {
-		if item.RelatedClassID == classItem.ID {
-			recentNotices = append(recentNotices, item)
-		}
+	if len(recentNotices) > recentItemLimit {
+		recentNotices = recentNotices[:recentItemLimit]
 	}
 
 	return ClassDetail{
@@ -2095,6 +2199,7 @@ func (s *Service) ClassDetail(rawClassID string) (ClassDetail, bool, error) {
 		UpcomingSchedules: upcomingSchedules,
 		RecentAttendance:  recentAttendance,
 		RecentHomeworks:   recentHomeworks,
+		RecentFeedbacks:   recentFeedbacks,
 		RecentNotices:     recentNotices,
 	}, true, nil
 }
@@ -2116,21 +2221,21 @@ func (s *Service) AddStudentsToClass(rawClassID string, studentIDs []uint64, ope
 		return true, nil
 	}
 
-	now := time.Now()
-	records := make([]edumodel.ClassStudent, 0, len(studentIDs))
-	for _, studentID := range studentIDs {
-		records = append(records, edumodel.ClassStudent{
-			ClassID:   classItem.ID,
-			StudentID: studentID,
-			JoinDate:  datePointer(startOfDay(now)),
-			Status:    activeClassStudentStatus,
-			CreatedAt: now,
-			UpdatedAt: now,
-		})
-	}
-
 	saveErr := s.db.Transaction(func(tx *gorm.DB) error {
-		createErr := tx.Clauses(clause.OnConflict{
+		now := time.Now()
+		records := make([]edumodel.ClassStudent, 0, len(studentIDs))
+		for _, studentID := range studentIDs {
+			records = append(records, edumodel.ClassStudent{
+				ClassID:   classItem.ID,
+				StudentID: studentID,
+				JoinDate:  datePointer(startOfDay(now)),
+				Status:    activeClassStudentStatus,
+				CreatedAt: now,
+				UpdatedAt: now,
+			})
+		}
+
+		createRelationErr := tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{
 				{Name: "class_id"},
 				{Name: "student_id"},
@@ -2141,18 +2246,18 @@ func (s *Service) AddStudentsToClass(rawClassID string, studentIDs []uint64, ope
 				"updated_at": now,
 			}),
 		}).Create(&records).Error
-		if createErr != nil {
-			return createErr
+		if createRelationErr != nil {
+			return createRelationErr
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"classes",
 			"add_students",
 			"class",
 			classItem.ID,
-			fmt.Sprintf("向班级 %s 加入 %d 名学员。", classItem.Name, len(studentIDs)),
+			fmt.Sprintf("向班级 %s 添加 %d 名学员。", classItem.Name, len(studentIDs)),
 		)
 	})
 	if saveErr != nil {
@@ -2163,20 +2268,28 @@ func (s *Service) AddStudentsToClass(rawClassID string, studentIDs []uint64, ope
 }
 
 func (s *Service) RemoveStudentFromClass(rawClassID string, rawStudentID string, operator Operator) (bool, error) {
-	classItem, found, classErr := s.Class(rawClassID)
-	if classErr != nil {
-		return false, classErr
-	}
-	if !found {
-		return false, nil
-	}
-
 	if s.db == nil {
 		return true, nil
 	}
 
-	now := time.Now()
+	classItem, classFound, classErr := s.Class(rawClassID)
+	if classErr != nil {
+		return false, classErr
+	}
+	if !classFound {
+		return false, nil
+	}
+
+	studentItem, studentFound, studentErr := s.Student(rawStudentID)
+	if studentErr != nil {
+		return false, studentErr
+	}
+	if !studentFound {
+		return false, nil
+	}
+
 	updateErr := s.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
 		updateResult := tx.Model(&edumodel.ClassStudent{}).
 			Where("class_id = ? AND student_id = ?", rawClassID, rawStudentID).
 			Updates(map[string]any{
@@ -2191,14 +2304,14 @@ func (s *Service) RemoveStudentFromClass(rawClassID string, rawStudentID string,
 			return gorm.ErrRecordNotFound
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"classes",
 			"remove_student",
 			"class",
 			classItem.ID,
-			fmt.Sprintf("从班级 %s 移出学员 %s。", classItem.Name, rawStudentID),
+			fmt.Sprintf("将学员 %s 移出班级 %s。", studentItem.Name, classItem.Name),
 		)
 	})
 	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
@@ -2299,8 +2412,16 @@ func (s *Service) ScheduleDetail(rawID string) (ScheduleDetail, bool, error) {
 }
 
 func (s *Service) Schedules() ([]ScheduleItem, error) {
+	return s.SchedulesWithFilter(ScheduleFilter{})
+}
+
+func (s *Service) SchedulesWithScope(scope Scope) ([]ScheduleItem, error) {
+	return s.SchedulesWithFilter(ScheduleFilter{Scope: scope})
+}
+
+func (s *Service) SchedulesWithFilter(filter ScheduleFilter) ([]ScheduleItem, error) {
 	if s.db == nil {
-		return scheduleItemsFromDemo(demo.Schedules()), nil
+		return scheduleItemsFromDemoWithFilter(filter), nil
 	}
 
 	query := `
@@ -2327,6 +2448,39 @@ LEFT JOIN courses AS co
   ON co.id = s.course_id
 LEFT JOIN teachers AS t
   ON t.id = s.teacher_id
+WHERE 1 = 1
+`
+
+	args := make([]any, 0, 5)
+	if filter.ClassID > 0 {
+		query += " AND s.class_id = ?"
+		args = append(args, filter.ClassID)
+	}
+	if filter.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.TeacherID)
+	}
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.Scope.TeacherID)
+	}
+	filterDateFrom := strings.TrimSpace(filter.DateFrom)
+	if filterDateFrom != "" {
+		query += " AND s.schedule_date >= ?"
+		args = append(args, filterDateFrom)
+	}
+	filterDateTo := strings.TrimSpace(filter.DateTo)
+	if filterDateTo != "" {
+		query += " AND s.schedule_date <= ?"
+		args = append(args, filterDateTo)
+	}
+	filterStatus := strings.TrimSpace(filter.Status)
+	if filterStatus != "" {
+		query += " AND s.status = ?"
+		args = append(args, filterStatus)
+	}
+
+	query += `
 ORDER BY s.schedule_date ASC, s.start_time ASC, s.id ASC
 `
 
@@ -2349,7 +2503,7 @@ ORDER BY s.schedule_date ASC, s.start_time ASC, s.id ASC
 	}
 
 	var rows []scheduleRow
-	listErr := s.db.Raw(query).Scan(&rows).Error
+	listErr := s.db.Raw(query, args...).Scan(&rows).Error
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -2392,11 +2546,31 @@ func (s *Service) Schedule(rawID string) (ScheduleItem, bool, error) {
 	return ScheduleItem{}, false, nil
 }
 
-func (s *Service) CreateSchedule(payload SchedulePayload, operator Operator) (ScheduleItem, error) {
-	return s.createSchedule(payload, operator, true)
+func (s *Service) ClassAccessible(rawID string, scope Scope) (ClassItem, bool, error) {
+	classItem, found, classErr := s.Class(rawID)
+	if classErr != nil {
+		return ClassItem{}, false, classErr
+	}
+	if !found || !s.ScopeAllowsTeacher(scope, classItem.TeacherID) {
+		return ClassItem{}, false, nil
+	}
+
+	return classItem, true, nil
 }
 
-func (s *Service) createSchedule(payload SchedulePayload, operator Operator, writeOperation bool) (ScheduleItem, error) {
+func (s *Service) ScheduleAccessible(rawID string, scope Scope) (ScheduleItem, bool, error) {
+	scheduleItem, found, scheduleErr := s.Schedule(rawID)
+	if scheduleErr != nil {
+		return ScheduleItem{}, false, scheduleErr
+	}
+	if !found || !s.ScopeAllowsTeacher(scope, scheduleItem.TeacherID) {
+		return ScheduleItem{}, false, nil
+	}
+
+	return scheduleItem, true, nil
+}
+
+func (s *Service) CreateSchedule(payload SchedulePayload, operator Operator) (ScheduleItem, error) {
 	classItem, found, classErr := s.Class(fmt.Sprintf("%d", payload.ClassID))
 	if classErr != nil {
 		return ScheduleItem{}, classErr
@@ -2444,33 +2618,32 @@ func (s *Service) createSchedule(payload SchedulePayload, operator Operator, wri
 		return ScheduleItem{}, nil
 	}
 
-	now := time.Now()
-	record := edumodel.ClassSchedule{
-		ClassID:          classItem.ID,
-		CourseID:         courseID,
-		TeacherID:        classItem.TeacherID,
-		SourceScheduleID: nil,
-		ScheduleType:     scheduleType,
-		ScheduleDate:     lessonDate,
-		StartTime:        strings.TrimSpace(payload.StartTime),
-		EndTime:          strings.TrimSpace(payload.EndTime),
-		Location:         strings.TrimSpace(payload.Classroom),
-		Status:           "待上课",
-		Remark:           strings.TrimSpace(payload.Remark),
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}
-
+	var createdScheduleID uint64
 	createErr := s.db.Transaction(func(tx *gorm.DB) error {
-		createRecordErr := tx.Create(&record).Error
-		if createRecordErr != nil {
-			return createRecordErr
-		}
-		if !writeOperation {
-			return nil
+		now := time.Now()
+		record := edumodel.ClassSchedule{
+			ClassID:          classItem.ID,
+			CourseID:         courseID,
+			TeacherID:        classItem.TeacherID,
+			SourceScheduleID: nil,
+			ScheduleType:     scheduleType,
+			ScheduleDate:     lessonDate,
+			StartTime:        strings.TrimSpace(payload.StartTime),
+			EndTime:          strings.TrimSpace(payload.EndTime),
+			Location:         strings.TrimSpace(payload.Classroom),
+			Status:           "待上课",
+			Remark:           strings.TrimSpace(payload.Remark),
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		}
 
-		return s.recordOperationTx(
+		createScheduleErr := tx.Create(&record).Error
+		if createScheduleErr != nil {
+			return createScheduleErr
+		}
+
+		createdScheduleID = record.ID
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"schedules",
@@ -2478,8 +2651,9 @@ func (s *Service) createSchedule(payload SchedulePayload, operator Operator, wri
 			"schedule",
 			record.ID,
 			fmt.Sprintf(
-				"新增%s %s %s的排课。",
+				"为班级 %s 新建%s排课，时间 %s %s。",
 				classItem.Name,
+				scheduleType,
 				lessonDate.Format(dateLayout),
 				formatLessonTime(payload.StartTime, payload.EndTime),
 			),
@@ -2489,7 +2663,7 @@ func (s *Service) createSchedule(payload SchedulePayload, operator Operator, wri
 		return ScheduleItem{}, createErr
 	}
 
-	createdItem, itemFound, detailErr := s.Schedule(fmt.Sprintf("%d", record.ID))
+	createdItem, itemFound, detailErr := s.Schedule(fmt.Sprintf("%d", createdScheduleID))
 	if detailErr != nil {
 		return ScheduleItem{}, detailErr
 	}
@@ -2557,25 +2731,25 @@ func (s *Service) UpdateSchedule(rawID string, payload SchedulePayload, operator
 		return ScheduleItem{}, false, nil
 	}
 
-	scheduleID, scheduleIDErr := strconv.ParseUint(rawID, 10, 64)
-	if scheduleIDErr != nil {
+	scheduleID, scheduleParseErr := strconv.ParseUint(rawID, 10, 64)
+	if scheduleParseErr != nil {
 		return ScheduleItem{}, false, nil
 	}
 
-	updateValues := map[string]any{
-		"class_id":      classItem.ID,
-		"course_id":     courseID,
-		"teacher_id":    classItem.TeacherID,
-		"schedule_type": scheduleType,
-		"schedule_date": lessonDate,
-		"start_time":    strings.TrimSpace(payload.StartTime),
-		"end_time":      strings.TrimSpace(payload.EndTime),
-		"location":      strings.TrimSpace(payload.Classroom),
-		"remark":        strings.TrimSpace(payload.Remark),
-		"updated_at":    time.Now(),
-	}
-
 	updateErr := s.db.Transaction(func(tx *gorm.DB) error {
+		updateValues := map[string]any{
+			"class_id":      classItem.ID,
+			"course_id":     courseID,
+			"teacher_id":    classItem.TeacherID,
+			"schedule_type": scheduleType,
+			"schedule_date": lessonDate,
+			"start_time":    strings.TrimSpace(payload.StartTime),
+			"end_time":      strings.TrimSpace(payload.EndTime),
+			"location":      strings.TrimSpace(payload.Classroom),
+			"remark":        strings.TrimSpace(payload.Remark),
+			"updated_at":    time.Now(),
+		}
+
 		updateResult := tx.Model(&edumodel.ClassSchedule{}).
 			Where("id = ?", scheduleID).
 			Updates(updateValues)
@@ -2586,7 +2760,7 @@ func (s *Service) UpdateSchedule(rawID string, payload SchedulePayload, operator
 			return gorm.ErrRecordNotFound
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"schedules",
@@ -2594,7 +2768,7 @@ func (s *Service) UpdateSchedule(rawID string, payload SchedulePayload, operator
 			"schedule",
 			scheduleID,
 			fmt.Sprintf(
-				"编辑%s %s %s的排课。",
+				"更新班级 %s 的排课，时间调整为 %s %s。",
 				classItem.Name,
 				lessonDate.Format(dateLayout),
 				formatLessonTime(payload.StartTime, payload.EndTime),
@@ -2640,7 +2814,7 @@ func (s *Service) Reschedule(rawID string, payload ScheduleActionPayload, operat
 		Remark:       strings.TrimSpace(payload.Remark),
 	}
 
-	replacementItem, createErr := s.createSchedule(replacementPayload, operator, false)
+	replacementItem, createErr := s.CreateSchedule(replacementPayload, Operator{})
 	if createErr != nil {
 		return ScheduleItem{}, false, createErr
 	}
@@ -2672,7 +2846,7 @@ func (s *Service) Reschedule(rawID string, payload ScheduleActionPayload, operat
 			return updateOriginalErr
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"schedules",
@@ -2680,7 +2854,7 @@ func (s *Service) Reschedule(rawID string, payload ScheduleActionPayload, operat
 			"schedule",
 			scheduleItem.ID,
 			fmt.Sprintf(
-				"将%s %s %s的课程调整到%s %s。",
+				"将班级 %s 的课程从 %s %s 调整到 %s %s。",
 				scheduleItem.ClassName,
 				scheduleItem.LessonDate,
 				scheduleItem.LessonTime,
@@ -2725,8 +2899,8 @@ func (s *Service) CancelSchedule(rawID string, payload ScheduleActionPayload, op
 		return scheduleItem, true, nil
 	}
 
-	scheduleID, scheduleIDErr := strconv.ParseUint(rawID, 10, 64)
-	if scheduleIDErr != nil {
+	scheduleID, scheduleParseErr := strconv.ParseUint(rawID, 10, 64)
+	if scheduleParseErr != nil {
 		return ScheduleItem{}, false, nil
 	}
 
@@ -2745,14 +2919,14 @@ func (s *Service) CancelSchedule(rawID string, payload ScheduleActionPayload, op
 			return gorm.ErrRecordNotFound
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"schedules",
 			"cancel",
 			"schedule",
 			scheduleID,
-			fmt.Sprintf("停课%s %s %s。", scheduleItem.ClassName, scheduleItem.LessonDate, scheduleItem.LessonTime),
+			fmt.Sprintf("将班级 %s 的课程 %s %s 标记为停课。", scheduleItem.ClassName, scheduleItem.LessonDate, scheduleItem.LessonTime),
 		)
 	})
 	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
@@ -2798,7 +2972,7 @@ func (s *Service) CreateMakeupSchedule(rawID string, payload ScheduleActionPaylo
 		Remark:       payload.Remark,
 	}
 
-	createdItem, createErr := s.createSchedule(makeupPayload, operator, false)
+	createdItem, createErr := s.CreateSchedule(makeupPayload, Operator{})
 	if createErr != nil {
 		return ScheduleItem{}, false, createErr
 	}
@@ -2825,21 +2999,14 @@ func (s *Service) CreateMakeupSchedule(rawID string, payload ScheduleActionPaylo
 			return updateSourceErr
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"schedules",
 			"makeup",
 			"schedule",
 			createdItem.ID,
-			fmt.Sprintf(
-				"为%s %s %s新增补课，时间为%s %s。",
-				originalItem.ClassName,
-				originalItem.LessonDate,
-				originalItem.LessonTime,
-				createdItem.LessonDate,
-				createdItem.LessonTime,
-			),
+			fmt.Sprintf("为班级 %s 创建补课安排，时间 %s %s。", originalItem.ClassName, createdItem.LessonDate, createdItem.LessonTime),
 		)
 	})
 	if sourceErr != nil {
@@ -2888,6 +3055,26 @@ func (s *Service) classCourseID(classID uint64) (uint64, bool, error) {
 }
 
 func (s *Service) UpcomingSchedules(rawClassID string) ([]ScheduleItem, error) {
+	items, listErr := s.classSchedules(rawClassID)
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	today := startOfDay(time.Now())
+	filteredItems := make([]ScheduleItem, 0, len(items))
+	for _, item := range items {
+		lessonDate, parseErr := time.ParseInLocation(dateLayout, item.LessonDate, time.Local)
+		if parseErr == nil && startOfDay(lessonDate).Before(today) {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems, nil
+}
+
+func (s *Service) classSchedules(rawClassID string) ([]ScheduleItem, error) {
 	items, listErr := s.Schedules()
 	if listErr != nil {
 		return nil, listErr
@@ -2895,17 +3082,64 @@ func (s *Service) UpcomingSchedules(rawClassID string) ([]ScheduleItem, error) {
 
 	filteredItems := make([]ScheduleItem, 0, len(items))
 	for _, item := range items {
-		if fmt.Sprintf("%d", item.ClassID) == rawClassID {
-			filteredItems = append(filteredItems, item)
+		if fmt.Sprintf("%d", item.ClassID) != rawClassID {
+			continue
 		}
+
+		filteredItems = append(filteredItems, item)
 	}
 
 	return filteredItems, nil
 }
 
+func (s *Service) recentAttendanceSessions(items []ScheduleItem, limit int) ([]AttendanceSessionItem, error) {
+	if len(items) == 0 || limit <= 0 {
+		return []AttendanceSessionItem{}, nil
+	}
+
+	today := startOfDay(time.Now())
+	recentItems := make([]AttendanceSessionItem, 0, limit)
+	for index := len(items) - 1; index >= 0; index-- {
+		scheduleItem := items[index]
+		lessonDate, parseErr := time.ParseInLocation(dateLayout, scheduleItem.LessonDate, time.Local)
+		if parseErr == nil && startOfDay(lessonDate).After(today) {
+			continue
+		}
+
+		attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+		if attendanceErr != nil {
+			return nil, attendanceErr
+		}
+
+		presentCount, leaveCount, absentCount, pendingCount := summarizeAttendanceItems(attendanceItems)
+		recentItems = append(recentItems, AttendanceSessionItem{
+			ID:               scheduleItem.ID,
+			ClassID:          scheduleItem.ClassID,
+			ClassName:        scheduleItem.ClassName,
+			CourseName:       scheduleItem.CourseName,
+			TeacherName:      scheduleItem.TeacherName,
+			Campus:           scheduleItem.Campus,
+			Classroom:        scheduleItem.Classroom,
+			LessonDate:       scheduleItem.LessonDate,
+			LessonTime:       scheduleItem.LessonTime,
+			AttendanceStatus: sessionAttendanceStatus(scheduleItem.AttendanceStatus, pendingCount),
+			StudentCount:     len(attendanceItems),
+			PresentCount:     presentCount,
+			LeaveCount:       leaveCount,
+			AbsentCount:      absentCount,
+			PendingCount:     pendingCount,
+		})
+		if len(recentItems) >= limit {
+			break
+		}
+	}
+
+	return recentItems, nil
+}
+
 func (s *Service) Attendance(rawScheduleID string) ([]AttendanceItem, error) {
 	if s.db == nil {
-		return attendanceItemsFromDemo(demo.Attendance(rawScheduleID)), nil
+		return attendanceItemsFromDemo(rawScheduleID, demo.Attendance(rawScheduleID)), nil
 	}
 
 	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
@@ -2920,7 +3154,11 @@ func (s *Service) Attendance(rawScheduleID string) ([]AttendanceItem, error) {
 }
 
 func (s *Service) AttendanceSessions() ([]AttendanceSessionItem, error) {
-	schedules, scheduleErr := s.Schedules()
+	return s.AttendanceSessionsWithScope(Scope{})
+}
+
+func (s *Service) AttendanceSessionsWithScope(scope Scope) ([]AttendanceSessionItem, error) {
+	schedules, scheduleErr := s.SchedulesWithScope(scope)
 	if scheduleErr != nil {
 		return nil, scheduleErr
 	}
@@ -2957,7 +3195,7 @@ func (s *Service) AttendanceSessions() ([]AttendanceSessionItem, error) {
 }
 
 func (s *Service) AttendanceRecords(filter AttendanceRecordFilter) ([]AttendanceRecordItem, error) {
-	schedules, scheduleErr := s.Schedules()
+	schedules, scheduleErr := s.SchedulesWithScope(filter.Scope)
 	if scheduleErr != nil {
 		return nil, scheduleErr
 	}
@@ -2971,6 +3209,9 @@ func (s *Service) AttendanceRecords(filter AttendanceRecordFilter) ([]Attendance
 			continue
 		}
 		if filterDate != "" && scheduleItem.LessonDate != filterDate {
+			continue
+		}
+		if !matchesDateRange(scheduleItem.LessonDate, filter.DateFrom, filter.DateTo) {
 			continue
 		}
 
@@ -2987,28 +3228,310 @@ func (s *Service) AttendanceRecords(filter AttendanceRecordFilter) ([]Attendance
 				continue
 			}
 
-			items = append(items, AttendanceRecordItem{
-				ScheduleID:   scheduleItem.ID,
-				ClassID:      scheduleItem.ClassID,
-				ClassName:    scheduleItem.ClassName,
-				StudentID:    attendanceItem.StudentID,
-				StudentName:  attendanceItem.StudentName,
-				TeacherName:  scheduleItem.TeacherName,
-				LessonDate:   scheduleItem.LessonDate,
-				LessonTime:   scheduleItem.LessonTime,
-				Status:       attendanceItem.Status,
-				Remark:       attendanceItem.Remark,
-				UpdatedBy:    attendanceItem.UpdatedBy,
-				UpdatedAt:    attendanceItem.UpdatedAt,
-				ParentMobile: attendanceItem.ParentMobile,
-			})
+			items = append(items, attendanceRecordItemFromAttendanceItem(scheduleItem, attendanceItem))
 		}
 	}
 
 	return items, nil
 }
 
-func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePayload, operator Operator) (bool, error) {
+func (s *Service) AttendanceRecord(rawRecordID string) (AttendanceRecordItem, bool, error) {
+	if s.db == nil {
+		recordID, parseErr := strconv.ParseUint(strings.TrimSpace(rawRecordID), 10, 64)
+		if parseErr != nil || recordID == 0 {
+			return AttendanceRecordItem{}, false, nil
+		}
+
+		scheduleID, studentID, parsed := attendanceRecordPartsFromID(recordID)
+		if !parsed {
+			return AttendanceRecordItem{}, false, nil
+		}
+
+		return s.attendanceRecordByScheduleStudent(scheduleID, studentID)
+	}
+
+	query := `
+SELECT
+  ar.id,
+  ar.schedule_id,
+  s.class_id,
+  COALESCE(c.name, '') AS class_name,
+  ar.student_id,
+  COALESCE(st.name, '') AS student_name,
+  COALESCE(s.teacher_id, 0) AS teacher_id,
+  COALESCE(t.name, '') AS teacher_name,
+  COALESCE(DATE_FORMAT(s.schedule_date, '%Y-%m-%d'), '') AS lesson_date,
+  COALESCE(s.start_time, '') AS start_time,
+  COALESCE(s.end_time, '') AS end_time,
+  COALESCE(ar.status, '') AS status,
+  COALESCE(ar.remark, '') AS remark,
+  COALESCE(ar.updated_by, '') AS updated_by,
+  ar.checked_at AS checked_at,
+  COALESCE(g.mobile, '') AS parent_mobile
+FROM attendance_records AS ar
+LEFT JOIN class_schedules AS s
+  ON s.id = ar.schedule_id
+LEFT JOIN classes AS c
+  ON c.id = s.class_id
+LEFT JOIN teachers AS t
+  ON t.id = s.teacher_id
+LEFT JOIN students AS st
+  ON st.id = ar.student_id
+LEFT JOIN student_guardians AS g
+  ON g.student_id = st.id AND g.is_primary = 1
+WHERE ar.id = ?
+LIMIT 1
+`
+
+	type attendanceRecordRow struct {
+		ID           uint64     `gorm:"column:id"`
+		ScheduleID   uint64     `gorm:"column:schedule_id"`
+		ClassID      uint64     `gorm:"column:class_id"`
+		ClassName    string     `gorm:"column:class_name"`
+		StudentID    uint64     `gorm:"column:student_id"`
+		StudentName  string     `gorm:"column:student_name"`
+		TeacherID    uint64     `gorm:"column:teacher_id"`
+		TeacherName  string     `gorm:"column:teacher_name"`
+		LessonDate   string     `gorm:"column:lesson_date"`
+		StartTime    string     `gorm:"column:start_time"`
+		EndTime      string     `gorm:"column:end_time"`
+		Status       string     `gorm:"column:status"`
+		Remark       string     `gorm:"column:remark"`
+		UpdatedBy    string     `gorm:"column:updated_by"`
+		CheckedAt    *time.Time `gorm:"column:checked_at"`
+		ParentMobile string     `gorm:"column:parent_mobile"`
+	}
+
+	var row attendanceRecordRow
+	findErr := s.db.Raw(query, rawRecordID).Scan(&row).Error
+	if findErr != nil {
+		return AttendanceRecordItem{}, false, findErr
+	}
+	if row.ID > 0 {
+		return AttendanceRecordItem{
+			ID:           row.ID,
+			ScheduleID:   row.ScheduleID,
+			ClassID:      row.ClassID,
+			ClassName:    row.ClassName,
+			StudentID:    row.StudentID,
+			StudentName:  row.StudentName,
+			TeacherID:    row.TeacherID,
+			TeacherName:  row.TeacherName,
+			LessonDate:   row.LessonDate,
+			LessonTime:   formatLessonTime(row.StartTime, row.EndTime),
+			Status:       normalizeAttendanceItemStatus(row.Status),
+			Remark:       row.Remark,
+			UpdatedBy:    row.UpdatedBy,
+			UpdatedAt:    formatDateTime(row.CheckedAt),
+			ParentMobile: row.ParentMobile,
+		}, true, nil
+	}
+
+	recordID, parseErr := strconv.ParseUint(strings.TrimSpace(rawRecordID), 10, 64)
+	if parseErr != nil || recordID == 0 {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	scheduleID, studentID, parsed := attendanceRecordPartsFromID(recordID)
+	if !parsed {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	return s.attendanceRecordByScheduleStudent(scheduleID, studentID)
+}
+
+func (s *Service) UpdateAttendanceRecord(rawRecordID string, payload AttendanceRecordUpdatePayload, operator Operator) (AttendanceRecordItem, bool, error) {
+	nextStatus := normalizeAttendanceItemStatus(payload.Status)
+	if nextStatus == "" {
+		return AttendanceRecordItem{}, false, ErrInvalidAttendanceStatus
+	}
+
+	recordItem, found, recordErr := s.AttendanceRecord(rawRecordID)
+	if recordErr != nil {
+		return AttendanceRecordItem{}, false, recordErr
+	}
+	if !found {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	trimmedRemark := strings.TrimSpace(payload.Remark)
+	now := time.Now()
+	editorName := operationDisplayName(operator, "")
+
+	if s.db == nil {
+		scheduleItem, scheduleFound, scheduleErr := s.Schedule(fmt.Sprintf("%d", recordItem.ScheduleID))
+		if scheduleErr != nil {
+			return AttendanceRecordItem{}, false, scheduleErr
+		}
+		if !scheduleFound {
+			return AttendanceRecordItem{}, false, nil
+		}
+
+		currentItems, currentErr := s.attendanceFromSchedule(scheduleItem)
+		if currentErr != nil {
+			return AttendanceRecordItem{}, false, currentErr
+		}
+
+		demoItems := make([]demo.AttendanceItem, 0, len(currentItems))
+		itemFound := false
+		for _, item := range currentItems {
+			nextItem := item
+			if item.RecordID == recordItem.ID {
+				nextItem.Status = nextStatus
+				nextItem.Remark = trimmedRemark
+				nextItem.UpdatedBy = editorName
+				nextItem.UpdatedAt = now.Format(dateTimeLayout)
+				itemFound = true
+			}
+
+			demoItems = append(demoItems, demo.AttendanceItem{
+				StudentID:    int(nextItem.StudentID),
+				StudentName:  nextItem.StudentName,
+				Grade:        nextItem.Grade,
+				ParentMobile: nextItem.ParentMobile,
+				Status:       nextItem.Status,
+				Remark:       nextItem.Remark,
+				UpdatedBy:    nextItem.UpdatedBy,
+				UpdatedAt:    nextItem.UpdatedAt,
+			})
+		}
+		if !itemFound {
+			return AttendanceRecordItem{}, false, nil
+		}
+		if !demo.SaveAttendance(fmt.Sprintf("%d", recordItem.ScheduleID), demoItems) {
+			return AttendanceRecordItem{}, false, nil
+		}
+
+		return s.attendanceRecordByScheduleStudent(recordItem.ScheduleID, recordItem.StudentID)
+	}
+
+	scheduleItem, scheduleFound, scheduleErr := s.Schedule(fmt.Sprintf("%d", recordItem.ScheduleID))
+	if scheduleErr != nil {
+		return AttendanceRecordItem{}, false, scheduleErr
+	}
+	if !scheduleFound {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	currentItems, currentErr := s.attendanceFromSchedule(scheduleItem)
+	if currentErr != nil {
+		return AttendanceRecordItem{}, false, currentErr
+	}
+
+	itemFound := false
+	for index := range currentItems {
+		if currentItems[index].RecordID != recordItem.ID {
+			continue
+		}
+
+		currentItems[index].Status = nextStatus
+		currentItems[index].Remark = trimmedRemark
+		currentItems[index].UpdatedBy = editorName
+		currentItems[index].UpdatedAt = now.Format(dateTimeLayout)
+		itemFound = true
+		break
+	}
+	if !itemFound {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	_, _, _, pendingCount := summarizeAttendanceItems(currentItems)
+	sessionStatus := nextSavedAttendanceStatus(pendingCount)
+	targetRecordID := recordItem.ID
+
+	transactionErr := s.db.Transaction(func(tx *gorm.DB) error {
+		record := edumodel.AttendanceRecord{
+			ScheduleID: recordItem.ScheduleID,
+			StudentID:  recordItem.StudentID,
+			Status:     nextStatus,
+			Remark:     trimmedRemark,
+			CheckedAt:  &now,
+			UpdatedBy:  editorName,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+
+		saveErr := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "schedule_id"},
+				{Name: "student_id"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"status",
+				"remark",
+				"checked_at",
+				"updated_by",
+				"updated_at",
+			}),
+		}).Create(&record).Error
+		if saveErr != nil {
+			return saveErr
+		}
+		if record.ID > 0 {
+			targetRecordID = record.ID
+		}
+
+		sessionUpdateErr := tx.Model(&edumodel.ClassSchedule{}).
+			Where("id = ?", recordItem.ScheduleID).
+			Updates(map[string]any{
+				"status":     sessionStatus,
+				"updated_at": now,
+			}).Error
+		if sessionUpdateErr != nil {
+			return sessionUpdateErr
+		}
+
+		content := fmt.Sprintf(
+			"更正班级 %s 在 %s %s 的学员 %s 签到结果为 %s。",
+			recordItem.ClassName,
+			recordItem.LessonDate,
+			recordItem.LessonTime,
+			recordItem.StudentName,
+			nextStatus,
+		)
+
+		return s.recordBusinessOperationTx(tx, operator, "attendance", "update_record", "attendance_record", targetRecordID, content)
+	})
+	if errors.Is(transactionErr, gorm.ErrRecordNotFound) {
+		return AttendanceRecordItem{}, false, nil
+	}
+	if transactionErr != nil {
+		return AttendanceRecordItem{}, false, transactionErr
+	}
+
+	return s.attendanceRecordByScheduleStudent(recordItem.ScheduleID, recordItem.StudentID)
+}
+
+func (s *Service) attendanceRecordByScheduleStudent(scheduleID uint64, studentID uint64) (AttendanceRecordItem, bool, error) {
+	if scheduleID == 0 || studentID == 0 {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	scheduleItem, found, scheduleErr := s.Schedule(fmt.Sprintf("%d", scheduleID))
+	if scheduleErr != nil {
+		return AttendanceRecordItem{}, false, scheduleErr
+	}
+	if !found {
+		return AttendanceRecordItem{}, false, nil
+	}
+
+	attendanceItems, attendanceErr := s.attendanceFromSchedule(scheduleItem)
+	if attendanceErr != nil {
+		return AttendanceRecordItem{}, false, attendanceErr
+	}
+
+	for _, attendanceItem := range attendanceItems {
+		if attendanceItem.StudentID != studentID {
+			continue
+		}
+
+		return attendanceRecordItemFromAttendanceItem(scheduleItem, attendanceItem), true, nil
+	}
+
+	return AttendanceRecordItem{}, false, nil
+}
+
+func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePayload, updatedBy string, operator Operator) (bool, error) {
 	scheduleItem, found, scheduleErr := s.Schedule(rawScheduleID)
 	if scheduleErr != nil {
 		return false, scheduleErr
@@ -3050,13 +3573,9 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 		finalItems = append(finalItems, nextItem)
 	}
 
-	presentCount, leaveCount, absentCount, pendingCount := summarizeAttendanceItems(finalItems)
+	_, _, _, pendingCount := summarizeAttendanceItems(finalItems)
 	nextStatus := nextSavedAttendanceStatus(pendingCount)
 	now := time.Now()
-	editorName := strings.TrimSpace(operator.DisplayName)
-	if editorName == "" {
-		editorName = "系统管理员"
-	}
 
 	if s.db == nil {
 		demoItems := make([]demo.AttendanceItem, 0, len(finalItems))
@@ -3068,7 +3587,7 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 				ParentMobile: item.ParentMobile,
 				Status:       item.Status,
 				Remark:       item.Remark,
-				UpdatedBy:    editorName,
+				UpdatedBy:    strings.TrimSpace(updatedBy),
 				UpdatedAt:    now.Format(dateTimeLayout),
 			})
 		}
@@ -3082,6 +3601,7 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 	}
 
 	records := make([]edumodel.AttendanceRecord, 0, len(finalItems))
+	editorName := operationDisplayName(operator, updatedBy)
 	for _, item := range finalItems {
 		checkedAt := now
 		records = append(records, edumodel.AttendanceRecord{
@@ -3097,6 +3617,14 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 	}
 
 	transactionErr := s.db.Transaction(func(tx *gorm.DB) error {
+		var existingRecordCount int64
+		countErr := tx.Model(&edumodel.AttendanceRecord{}).
+			Where("schedule_id = ?", scheduleID).
+			Count(&existingRecordCount).Error
+		if countErr != nil {
+			return countErr
+		}
+
 		if len(records) > 0 {
 			createErr := tx.Clauses(clause.OnConflict{
 				Columns: []clause.Column{
@@ -3126,23 +3654,14 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 			return updateErr
 		}
 
-		return s.recordOperationTx(
-			tx,
-			operator,
-			"attendance",
-			"save",
-			"schedule",
-			scheduleID,
-			fmt.Sprintf(
-				"保存%s %s的签到：%d人到课、%d人请假、%d人缺席、%d人待确认。",
-				scheduleItem.ClassName,
-				scheduleItem.LessonDate,
-				presentCount,
-				leaveCount,
-				absentCount,
-				pendingCount,
-			),
-		)
+		action := "create"
+		content := fmt.Sprintf("保存班级 %s 在 %s %s 的签到结果。", scheduleItem.ClassName, scheduleItem.LessonDate, scheduleItem.LessonTime)
+		if existingRecordCount > 0 {
+			action = "update"
+			content = fmt.Sprintf("更新班级 %s 在 %s %s 的签到结果。", scheduleItem.ClassName, scheduleItem.LessonDate, scheduleItem.LessonTime)
+		}
+
+		return s.recordBusinessOperationTx(tx, operator, "attendance", action, "schedule", scheduleID, content)
 	})
 	if transactionErr != nil {
 		return false, transactionErr
@@ -3153,11 +3672,12 @@ func (s *Service) SaveAttendance(rawScheduleID string, payload AttendanceSavePay
 
 func (s *Service) attendanceFromSchedule(scheduleItem ScheduleItem) ([]AttendanceItem, error) {
 	if s.db == nil {
-		return attendanceItemsFromDemo(demo.Attendance(fmt.Sprintf("%d", scheduleItem.ID))), nil
+		return attendanceItemsFromDemo(fmt.Sprintf("%d", scheduleItem.ID), demo.Attendance(fmt.Sprintf("%d", scheduleItem.ID))), nil
 	}
 
 	query := `
 SELECT
+  COALESCE(ar.id, 0) AS attendance_record_id,
   st.id AS student_id,
   st.name AS student_name,
   st.grade_name AS grade,
@@ -3178,14 +3698,15 @@ ORDER BY st.id ASC
 `
 
 	type attendanceRow struct {
-		StudentID        uint64     `gorm:"column:student_id"`
-		StudentName      string     `gorm:"column:student_name"`
-		Grade            string     `gorm:"column:grade"`
-		ParentMobile     string     `gorm:"column:parent_mobile"`
-		AttendanceStatus string     `gorm:"column:attendance_status"`
-		AttendanceRemark string     `gorm:"column:attendance_remark"`
-		UpdatedBy        string     `gorm:"column:updated_by"`
-		CheckedAt        *time.Time `gorm:"column:checked_at"`
+		AttendanceRecordID uint64     `gorm:"column:attendance_record_id"`
+		StudentID          uint64     `gorm:"column:student_id"`
+		StudentName        string     `gorm:"column:student_name"`
+		Grade              string     `gorm:"column:grade"`
+		ParentMobile       string     `gorm:"column:parent_mobile"`
+		AttendanceStatus   string     `gorm:"column:attendance_status"`
+		AttendanceRemark   string     `gorm:"column:attendance_remark"`
+		UpdatedBy          string     `gorm:"column:updated_by"`
+		CheckedAt          *time.Time `gorm:"column:checked_at"`
 	}
 
 	var rows []attendanceRow
@@ -3201,7 +3722,13 @@ ORDER BY st.id ASC
 			status = defaultAttendanceItemStatus(scheduleItem.AttendanceStatus, index, len(rows))
 		}
 
+		recordID := row.AttendanceRecordID
+		if recordID == 0 {
+			recordID = attendanceRecordIDFromValues(scheduleItem.ID, row.StudentID)
+		}
+
 		items = append(items, AttendanceItem{
+			RecordID:     recordID,
 			StudentID:    row.StudentID,
 			StudentName:  row.StudentName,
 			Grade:        row.Grade,
@@ -3258,6 +3785,10 @@ WHERE 1 = 1
 	if filter.TeacherID > 0 {
 		query += " AND s.teacher_id = ?"
 		args = append(args, filter.TeacherID)
+	}
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.Scope.TeacherID)
 	}
 	if strings.TrimSpace(filter.DateFrom) != "" {
 		query += " AND s.schedule_date >= ?"
@@ -3454,26 +3985,31 @@ func (s *Service) SaveHomework(rawScheduleID string, payload HomeworkPayload, op
 		return HomeworkItem{}, false, nil
 	}
 
-	creatorUserID := operator.UserID
-	if creatorUserID == 0 {
-		creatorUserID = 1
-	}
-
-	now := time.Now()
-	record := edumodel.Homework{
-		ScheduleID:      scheduleID,
-		ClassID:         scheduleItem.ClassID,
-		Title:           trimmedTitle,
-		Content:         strings.TrimSpace(payload.Content),
-		SubmissionNote:  strings.TrimSpace(payload.SubmissionNote),
-		CreatedByUserID: creatorUserID,
-		Status:          normalizedStatus,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}
-
 	saveErr := s.db.Transaction(func(tx *gorm.DB) error {
-		createErr := tx.Clauses(clause.OnConflict{
+		var existingHomework edumodel.Homework
+		findHomeworkErr := tx.Model(&edumodel.Homework{}).
+			Select("id").
+			Where("schedule_id = ?", scheduleID).
+			Limit(1).
+			Scan(&existingHomework).Error
+		if findHomeworkErr != nil {
+			return findHomeworkErr
+		}
+
+		now := time.Now()
+		record := edumodel.Homework{
+			ScheduleID:      scheduleID,
+			ClassID:         scheduleItem.ClassID,
+			Title:           trimmedTitle,
+			Content:         strings.TrimSpace(payload.Content),
+			SubmissionNote:  strings.TrimSpace(payload.SubmissionNote),
+			CreatedByUserID: operationUserID(operator),
+			Status:          normalizedStatus,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
+
+		createHomeworkErr := tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "schedule_id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"title",
@@ -3483,19 +4019,20 @@ func (s *Service) SaveHomework(rawScheduleID string, payload HomeworkPayload, op
 				"updated_at",
 			}),
 		}).Create(&record).Error
-		if createErr != nil {
-			return createErr
+		if createHomeworkErr != nil {
+			return createHomeworkErr
 		}
 
-		return s.recordOperationTx(
-			tx,
-			operator,
-			"homeworks",
-			"save",
-			"schedule",
-			scheduleID,
-			fmt.Sprintf("保存%s %s的课后作业：%s。", scheduleItem.ClassName, scheduleItem.LessonDate, trimmedTitle),
-		)
+		action := "create"
+		targetID := record.ID
+		content := fmt.Sprintf("为班级 %s 保存作业《%s》。", scheduleItem.ClassName, trimmedTitle)
+		if existingHomework.ID > 0 {
+			action = "update"
+			targetID = existingHomework.ID
+			content = fmt.Sprintf("更新班级 %s 的作业《%s》。", scheduleItem.ClassName, trimmedTitle)
+		}
+
+		return s.recordBusinessOperationTx(tx, operator, "homeworks", action, "homework", targetID, content)
 	})
 	if saveErr != nil {
 		return HomeworkItem{}, false, saveErr
@@ -3551,6 +4088,10 @@ WHERE 1 = 1
 	if filter.TeacherID > 0 {
 		query += " AND s.teacher_id = ?"
 		args = append(args, filter.TeacherID)
+	}
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		query += " AND s.teacher_id = ?"
+		args = append(args, filter.Scope.TeacherID)
 	}
 	if strings.TrimSpace(filter.DateFrom) != "" {
 		query += " AND s.schedule_date >= ?"
@@ -3737,26 +4278,31 @@ func (s *Service) SaveFeedback(rawScheduleID string, payload FeedbackPayload, op
 		return FeedbackItem{}, false, nil
 	}
 
-	creatorUserID := operator.UserID
-	if creatorUserID == 0 {
-		creatorUserID = 1
-	}
-
-	now := time.Now()
-	record := edumodel.ClassFeedback{
-		ScheduleID:      scheduleID,
-		ClassID:         scheduleItem.ClassID,
-		Summary:         strings.TrimSpace(payload.Summary),
-		LearningStatus:  strings.TrimSpace(payload.LearningStatus),
-		NextSuggestion:  strings.TrimSpace(payload.NextSuggestion),
-		ParentNotice:    strings.TrimSpace(payload.ParentNotice),
-		CreatedByUserID: creatorUserID,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}
-
 	saveErr := s.db.Transaction(func(tx *gorm.DB) error {
-		createErr := tx.Clauses(clause.OnConflict{
+		var existingFeedback edumodel.ClassFeedback
+		findFeedbackErr := tx.Model(&edumodel.ClassFeedback{}).
+			Select("id").
+			Where("schedule_id = ?", scheduleID).
+			Limit(1).
+			Scan(&existingFeedback).Error
+		if findFeedbackErr != nil {
+			return findFeedbackErr
+		}
+
+		now := time.Now()
+		record := edumodel.ClassFeedback{
+			ScheduleID:      scheduleID,
+			ClassID:         scheduleItem.ClassID,
+			Summary:         strings.TrimSpace(payload.Summary),
+			LearningStatus:  strings.TrimSpace(payload.LearningStatus),
+			NextSuggestion:  strings.TrimSpace(payload.NextSuggestion),
+			ParentNotice:    strings.TrimSpace(payload.ParentNotice),
+			CreatedByUserID: operationUserID(operator),
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
+
+		createFeedbackErr := tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "schedule_id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"summary",
@@ -3766,19 +4312,20 @@ func (s *Service) SaveFeedback(rawScheduleID string, payload FeedbackPayload, op
 				"updated_at",
 			}),
 		}).Create(&record).Error
-		if createErr != nil {
-			return createErr
+		if createFeedbackErr != nil {
+			return createFeedbackErr
 		}
 
-		return s.recordOperationTx(
-			tx,
-			operator,
-			"homeworks",
-			"save_feedback",
-			"schedule",
-			scheduleID,
-			fmt.Sprintf("保存%s %s的课后反馈。", scheduleItem.ClassName, scheduleItem.LessonDate),
-		)
+		action := "create"
+		targetID := record.ID
+		content := fmt.Sprintf("为班级 %s 保存课后反馈。", scheduleItem.ClassName)
+		if existingFeedback.ID > 0 {
+			action = "update"
+			targetID = existingFeedback.ID
+			content = fmt.Sprintf("更新班级 %s 的课后反馈。", scheduleItem.ClassName)
+		}
+
+		return s.recordBusinessOperationTx(tx, operator, "feedbacks", action, "feedback", targetID, content)
 	})
 	if saveErr != nil {
 		return FeedbackItem{}, false, saveErr
@@ -3838,6 +4385,7 @@ WHERE 1 = 1
 		query += " AND COALESCE(related_class_id, 0) = ?"
 		queryArgs = append(queryArgs, filter.ClassID)
 	}
+	query, queryArgs = appendNoticeScopeFilter(query, queryArgs, filter.Scope)
 
 	filterDate := strings.TrimSpace(filter.Date)
 	filterStatus := strings.TrimSpace(filter.Status)
@@ -3985,6 +4533,46 @@ LIMIT 1
 		PublishAt:         publishAt,
 		Author:            row.Author,
 	}, true, nil
+}
+
+func (s *Service) NoticeAccessible(rawNoticeID string, scope Scope) (bool, error) {
+	if !scope.RestrictToSelf || scope.TeacherID == 0 {
+		return true, nil
+	}
+
+	if s.db == nil {
+		noticeItem, found, noticeErr := s.Notice(rawNoticeID)
+		if noticeErr != nil {
+			return false, noticeErr
+		}
+		if !found {
+			return false, nil
+		}
+
+		return s.noticeMatchesScope(scope, noticeItem)
+	}
+
+	query := `
+SELECT id
+FROM notices
+WHERE id = ?
+`
+
+	queryArgs := []any{rawNoticeID}
+	query, queryArgs = appendNoticeScopeFilter(query, queryArgs, scope)
+	query += " LIMIT 1"
+
+	type noticeAccessRow struct {
+		ID uint64 `gorm:"column:id"`
+	}
+
+	var row noticeAccessRow
+	findErr := s.db.Raw(query, queryArgs...).Scan(&row).Error
+	if findErr != nil {
+		return false, findErr
+	}
+
+	return row.ID > 0, nil
 }
 
 func (s *Service) NoticeTargets(rawNoticeID string) ([]NoticeTargetItem, error) {
@@ -4187,28 +4775,29 @@ func (s *Service) CreateNotice(input NoticePayload, operator Operator) (NoticeIt
 		return item, nil
 	}
 
-	now := time.Now()
-	record := edumodel.Notice{
-		Title:       input.Title,
-		Content:     input.Content,
-		NoticeType:  input.Category,
-		TargetScope: input.TargetScope,
-		AuthorName:  input.Author,
-		Status:      input.Status,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	if input.RelatedClassID > 0 {
-		record.RelatedClassID = &input.RelatedClassID
-	}
-	if input.RelatedScheduleID > 0 {
-		record.RelatedScheduleID = &input.RelatedScheduleID
-	}
-	if input.Status == "已发送" || input.Status == "待发送" {
-		record.PublishAt = &now
-	}
-
+	var createdNoticeID uint64
 	createErr := s.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		record := edumodel.Notice{
+			Title:       input.Title,
+			Content:     input.Content,
+			NoticeType:  input.Category,
+			TargetScope: input.TargetScope,
+			AuthorName:  input.Author,
+			Status:      input.Status,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if input.RelatedClassID > 0 {
+			record.RelatedClassID = &input.RelatedClassID
+		}
+		if input.RelatedScheduleID > 0 {
+			record.RelatedScheduleID = &input.RelatedScheduleID
+		}
+		if input.Status == "已发送" || input.Status == "待发送" {
+			record.PublishAt = &now
+		}
+
 		createNoticeErr := tx.Create(&record).Error
 		if createNoticeErr != nil {
 			return createNoticeErr
@@ -4219,27 +4808,28 @@ func (s *Service) CreateNotice(input NoticePayload, operator Operator) (NoticeIt
 			return targetSaveErr
 		}
 
-		return s.recordOperationTx(
+		createdNoticeID = record.ID
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"notices",
 			"create",
 			"notice",
 			record.ID,
-			fmt.Sprintf("新建通知 %s，范围：%s。", input.Title, input.TargetScope),
+			fmt.Sprintf("创建通知《%s》。", input.Title),
 		)
 	})
 	if createErr != nil {
 		return NoticeItem{}, createErr
 	}
 
-	createdItem, found, detailErr := s.Notice(fmt.Sprintf("%d", record.ID))
+	createdItem, found, detailErr := s.Notice(fmt.Sprintf("%d", createdNoticeID))
 	if detailErr != nil {
 		return NoticeItem{}, detailErr
 	}
 	if !found {
 		return NoticeItem{
-			ID:                record.ID,
+			ID:                createdNoticeID,
 			Title:             input.Title,
 			Content:           input.Content,
 			Category:          input.Category,
@@ -4248,7 +4838,7 @@ func (s *Service) CreateNotice(input NoticePayload, operator Operator) (NoticeIt
 			RelatedScheduleID: input.RelatedScheduleID,
 			StudentIDs:        cloneNoticeStudentIDs(input.StudentIDs),
 			Status:            input.Status,
-			PublishAt:         formatDateTime(record.PublishAt),
+			PublishAt:         "",
 			Author:            input.Author,
 		}, nil
 	}
@@ -4257,10 +4847,6 @@ func (s *Service) CreateNotice(input NoticePayload, operator Operator) (NoticeIt
 }
 
 func (s *Service) UpdateNotice(rawID string, input NoticePayload, operator Operator) (NoticeItem, bool, error) {
-	return s.updateNotice(rawID, input, operator, "update")
-}
-
-func (s *Service) updateNotice(rawID string, input NoticePayload, operator Operator, action string) (NoticeItem, bool, error) {
 	if len(input.StudentIDs) > 0 {
 		studentNames, studentErr := s.noticeStudentNames(input.StudentIDs)
 		if studentErr != nil {
@@ -4316,35 +4902,35 @@ func (s *Service) updateNotice(rawID string, input NoticePayload, operator Opera
 		return item, true, nil
 	}
 
-	noticeID, noticeIDErr := strconv.ParseUint(rawID, 10, 64)
-	if noticeIDErr != nil {
+	noticeID, parseErr := strconv.ParseUint(rawID, 10, 64)
+	if parseErr != nil {
 		return NoticeItem{}, false, nil
 	}
 
-	updateValues := map[string]any{
-		"title":               input.Title,
-		"content":             input.Content,
-		"notice_type":         input.Category,
-		"target_scope":        input.TargetScope,
-		"related_class_id":    nil,
-		"related_schedule_id": nil,
-		"status":              input.Status,
-		"author_name":         input.Author,
-		"updated_at":          time.Now(),
-	}
-	if input.RelatedClassID > 0 {
-		updateValues["related_class_id"] = input.RelatedClassID
-	}
-	if input.RelatedScheduleID > 0 {
-		updateValues["related_schedule_id"] = input.RelatedScheduleID
-	}
-	if input.Status == "草稿" {
-		updateValues["publish_at"] = nil
-	} else {
-		updateValues["publish_at"] = time.Now()
-	}
-
 	updateErr := s.db.Transaction(func(tx *gorm.DB) error {
+		updateValues := map[string]any{
+			"title":               input.Title,
+			"content":             input.Content,
+			"notice_type":         input.Category,
+			"target_scope":        input.TargetScope,
+			"related_class_id":    nil,
+			"related_schedule_id": nil,
+			"status":              input.Status,
+			"author_name":         input.Author,
+			"updated_at":          time.Now(),
+		}
+		if input.RelatedClassID > 0 {
+			updateValues["related_class_id"] = input.RelatedClassID
+		}
+		if input.RelatedScheduleID > 0 {
+			updateValues["related_schedule_id"] = input.RelatedScheduleID
+		}
+		if input.Status == "草稿" {
+			updateValues["publish_at"] = nil
+		} else {
+			updateValues["publish_at"] = time.Now()
+		}
+
 		updateResult := tx.Model(&edumodel.Notice{}).
 			Where("id = ?", noticeID).
 			Updates(updateValues)
@@ -4360,14 +4946,14 @@ func (s *Service) updateNotice(rawID string, input NoticePayload, operator Opera
 			return targetSaveErr
 		}
 
-		return s.recordOperationTx(
+		return s.recordBusinessOperationTx(
 			tx,
 			operator,
 			"notices",
-			action,
+			"update",
 			"notice",
 			noticeID,
-			noticeOperationContent(action, input),
+			fmt.Sprintf("更新通知《%s》。", input.Title),
 		)
 	})
 	if errors.Is(updateErr, gorm.ErrRecordNotFound) {
@@ -4391,19 +4977,61 @@ func (s *Service) SendNotice(rawID string, operator Operator) (NoticeItem, bool,
 		return item, found, itemErr
 	}
 
-	input := NoticePayload{
-		Title:             item.Title,
-		Content:           item.Content,
-		Category:          item.Category,
-		TargetScope:       item.TargetScope,
-		RelatedClassID:    item.RelatedClassID,
-		RelatedScheduleID: item.RelatedScheduleID,
-		StudentIDs:        cloneNoticeStudentIDs(item.StudentIDs),
-		Status:            "已发送",
-		Author:            item.Author,
+	if s.db == nil {
+		input := NoticePayload{
+			Title:             item.Title,
+			Content:           item.Content,
+			Category:          item.Category,
+			TargetScope:       item.TargetScope,
+			RelatedClassID:    item.RelatedClassID,
+			RelatedScheduleID: item.RelatedScheduleID,
+			StudentIDs:        cloneNoticeStudentIDs(item.StudentIDs),
+			Status:            "已发送",
+			Author:            item.Author,
+		}
+
+		return s.UpdateNotice(rawID, input, Operator{})
 	}
 
-	return s.updateNotice(rawID, input, operator, "send")
+	noticeID, parseErr := strconv.ParseUint(rawID, 10, 64)
+	if parseErr != nil {
+		return NoticeItem{}, false, nil
+	}
+
+	sendErr := s.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		updateResult := tx.Model(&edumodel.Notice{}).
+			Where("id = ?", noticeID).
+			Updates(map[string]any{
+				"status":     "已发送",
+				"publish_at": now,
+				"updated_at": now,
+			})
+		if updateResult.Error != nil {
+			return updateResult.Error
+		}
+		if updateResult.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		return s.recordBusinessOperationTx(
+			tx,
+			operator,
+			"notices",
+			"send",
+			"notice",
+			noticeID,
+			fmt.Sprintf("发送通知《%s》。", item.Title),
+		)
+	})
+	if errors.Is(sendErr, gorm.ErrRecordNotFound) {
+		return NoticeItem{}, false, nil
+	}
+	if sendErr != nil {
+		return NoticeItem{}, false, sendErr
+	}
+
+	return s.Notice(rawID)
 }
 
 func (s *Service) createScheduleNotice(rawScheduleID string, input NoticePayload) error {
@@ -4551,6 +5179,10 @@ ORDER BY id ASC
 }
 
 func (s *Service) replaceNoticeTargets(noticeID uint64, input NoticePayload) error {
+	if s.db == nil {
+		return nil
+	}
+
 	return s.replaceNoticeTargetsTx(s.db, noticeID, input)
 }
 
@@ -4592,15 +5224,6 @@ func (s *Service) replaceNoticeTargetsTx(tx *gorm.DB, noticeID uint64, input Not
 	}
 
 	return tx.Create(&targets).Error
-}
-
-func noticeOperationContent(action string, input NoticePayload) string {
-	switch action {
-	case "send":
-		return fmt.Sprintf("发送通知 %s，范围：%s。", input.Title, input.TargetScope)
-	default:
-		return fmt.Sprintf("编辑通知 %s，范围：%s。", input.Title, input.TargetScope)
-	}
 }
 
 func buildRescheduleNoticeContent(originalItem ScheduleItem, replacementItem ScheduleItem, remark string) string {
@@ -4673,7 +5296,7 @@ func (s *Service) seedIfEmpty() error {
 		tomorrow := today.AddDate(0, 0, 1)
 
 		teachers := []edumodel.Teacher{
-			{ID: 1, Name: "周老师", Mobile: "13800000001", MainSubject: "数学思维", EmploymentType: "全职", WeeklyHours: 18, Campus: "明发校区", Status: "在职", CreatedAt: now, UpdatedAt: now},
+			{ID: 1, UserID: uint64Pointer(4), Name: "周老师", Mobile: "13800000001", MainSubject: "数学思维", EmploymentType: "全职", WeeklyHours: 18, Campus: "明发校区", Status: "在职", CreatedAt: now, UpdatedAt: now},
 			{ID: 2, Name: "林老师", Mobile: "13800000002", MainSubject: "英语阅读", EmploymentType: "全职", WeeklyHours: 16, Campus: "百汇校区", Status: "在职", CreatedAt: now, UpdatedAt: now},
 			{ID: 3, Name: "陈老师", Mobile: "13800000003", MainSubject: "创意美术", EmploymentType: "兼职", WeeklyHours: 12, Campus: "明发校区", Status: "排课中", CreatedAt: now, UpdatedAt: now},
 		}
@@ -4815,6 +5438,8 @@ func teacherItemsFromDemo() []TeacherItem {
 	for _, item := range demo.Teachers() {
 		items = append(items, TeacherItem{
 			ID:             uint64(item.ID),
+			UserID:         demoTeacherUserID(item.ID),
+			UserName:       demoTeacherUserName(demoTeacherUserID(item.ID)),
 			Name:           item.Name,
 			Mobile:         item.Mobile,
 			Title:          item.Title,
@@ -4829,6 +5454,34 @@ func teacherItemsFromDemo() []TeacherItem {
 	return items
 }
 
+func (s *Service) teacherItemsFromDemoWithFilter(filter TeacherFilter) []TeacherItem {
+	items := teacherItemsFromDemo()
+	filteredItems := make([]TeacherItem, 0, len(items))
+	keyword := strings.TrimSpace(filter.Keyword)
+	status := strings.TrimSpace(filter.Status)
+	employmentType := strings.TrimSpace(filter.EmploymentType)
+	campus := strings.TrimSpace(filter.Campus)
+
+	for _, item := range items {
+		if keyword != "" && !matchesTeacherKeyword(item, keyword) {
+			continue
+		}
+		if status != "" && item.Status != status {
+			continue
+		}
+		if employmentType != "" && item.EmploymentType != employmentType {
+			continue
+		}
+		if campus != "" && item.Campus != campus {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
+}
+
 func teacherItemFromDemo(rawID string) (TeacherItem, bool, error) {
 	item, found := demo.FindTeacher(rawID)
 	if !found {
@@ -4836,6 +5489,8 @@ func teacherItemFromDemo(rawID string) (TeacherItem, bool, error) {
 	}
 	return TeacherItem{
 		ID:             uint64(item.ID),
+		UserID:         demoTeacherUserID(item.ID),
+		UserName:       demoTeacherUserName(demoTeacherUserID(item.ID)),
 		Name:           item.Name,
 		Mobile:         item.Mobile,
 		Title:          item.Title,
@@ -4846,6 +5501,76 @@ func teacherItemFromDemo(rawID string) (TeacherItem, bool, error) {
 		Status:         item.Status,
 		Remark:         item.Remark,
 	}, true, nil
+}
+
+func (s *Service) ensureTeacherUserBinding(userID uint64, excludeTeacherID uint64) error {
+	if s.db == nil || userID == 0 {
+		return nil
+	}
+
+	var user edumodel.User
+	findUserErr := s.db.Where("id = ?", userID).Take(&user).Error
+	if errors.Is(findUserErr, gorm.ErrRecordNotFound) {
+		return ErrTeacherUserNotFound
+	}
+	if findUserErr != nil {
+		return findUserErr
+	}
+
+	roleCodes, roleErr := s.userRoleCodes(userID)
+	if roleErr != nil {
+		return roleErr
+	}
+	if !containsString(roleCodes, "teacher") {
+		return ErrTeacherUserRoleInvalid
+	}
+
+	alreadyBound, boundErr := s.teacherUserBound(userID, excludeTeacherID)
+	if boundErr != nil {
+		return boundErr
+	}
+	if alreadyBound {
+		return ErrTeacherUserAlreadyBound
+	}
+
+	return nil
+}
+
+func (s *Service) userRoleCodes(userID uint64) ([]string, error) {
+	var rows []userRoleRecord
+	listErr := s.db.Table("user_roles AS ur").
+		Select("ur.user_id, ur.role_id, r.code AS role_code, r.name AS role_name").
+		Joins("JOIN roles AS r ON r.id = ur.role_id").
+		Where("ur.user_id = ?", userID).
+		Scan(&rows).Error
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	roleCodes := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.RoleCode) == "" {
+			continue
+		}
+		roleCodes = append(roleCodes, row.RoleCode)
+	}
+
+	return uniqueSortedStrings(roleCodes), nil
+}
+
+func (s *Service) teacherUserBound(userID uint64, excludeTeacherID uint64) (bool, error) {
+	query := s.db.Model(&edumodel.Teacher{}).Where("user_id = ?", userID)
+	if excludeTeacherID > 0 {
+		query = query.Where("id <> ?", excludeTeacherID)
+	}
+
+	var count int64
+	countErr := query.Count(&count).Error
+	if countErr != nil {
+		return false, countErr
+	}
+
+	return count > 0, nil
 }
 
 func courseItemsFromDemo(source []demo.Course) []CourseItem {
@@ -4904,6 +5629,29 @@ func courseItemFromPayload(id uint64, input CoursePayload) CourseItem {
 
 func studentItemsFromDemo() []StudentItem {
 	return studentItemsFromDemoWithSlice(demo.Students())
+}
+
+func (s *Service) studentItemsFromDemoWithFilter(filter StudentFilter) []StudentItem {
+	items := studentItemsFromDemo()
+	filteredItems := make([]StudentItem, 0, len(items))
+	keyword := strings.TrimSpace(filter.Keyword)
+	status := strings.TrimSpace(filter.Status)
+
+	for _, item := range items {
+		if keyword != "" && !matchesStudentKeyword(item, keyword) {
+			continue
+		}
+		if status != "" && item.Status != status {
+			continue
+		}
+		if filter.ClassID > 0 && item.ClassID != filter.ClassID {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
 }
 
 func studentItemsFromDemoWithSlice(source []demo.Student) []StudentItem {
@@ -4988,6 +5736,32 @@ func classItemsFromDemo(source []demo.Class) []ClassItem {
 	return items
 }
 
+func (s *Service) classItemsFromDemoWithFilter(filter ClassFilter) []ClassItem {
+	items := classItemsFromDemo(demo.Classes())
+	filteredItems := make([]ClassItem, 0, len(items))
+	keyword := strings.TrimSpace(filter.Keyword)
+	status := strings.TrimSpace(filter.Status)
+
+	for _, item := range items {
+		if keyword != "" && !matchesClassKeyword(item, keyword) {
+			continue
+		}
+		if status != "" && item.Status != status {
+			continue
+		}
+		if filter.CourseID > 0 && item.CourseID != filter.CourseID {
+			continue
+		}
+		if filter.TeacherID > 0 && item.TeacherID != filter.TeacherID {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
+}
+
 func classItemFromDemo(rawID string) (ClassItem, bool, error) {
 	item, found := demo.FindClass(rawID)
 	if !found {
@@ -5031,6 +5805,34 @@ func scheduleItemsFromDemo(source []demo.Schedule) []ScheduleItem {
 		})
 	}
 	return items
+}
+
+func scheduleItemsFromDemoWithFilter(filter ScheduleFilter) []ScheduleItem {
+	items := scheduleItemsFromDemo(demo.Schedules())
+	filteredItems := make([]ScheduleItem, 0, len(items))
+	filterStatus := strings.TrimSpace(filter.Status)
+
+	for _, item := range items {
+		if filter.ClassID > 0 && item.ClassID != filter.ClassID {
+			continue
+		}
+		if filter.TeacherID > 0 && item.TeacherID != filter.TeacherID {
+			continue
+		}
+		if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 && item.TeacherID != filter.Scope.TeacherID {
+			continue
+		}
+		if filterStatus != "" && item.AttendanceStatus != filterStatus {
+			continue
+		}
+		if !matchesDateRange(item.LessonDate, filter.DateFrom, filter.DateTo) {
+			continue
+		}
+
+		filteredItems = append(filteredItems, item)
+	}
+
+	return filteredItems
 }
 
 func noticeItemsFromDemo(source []demo.Notice) []NoticeItem {
@@ -5078,11 +5880,320 @@ func (s *Service) noticeItemsFromDemoWithFilter(filter NoticeFilter) []NoticeIte
 		if !matchesDateRange(noticeDate, filter.DateFrom, filter.DateTo) {
 			continue
 		}
+		scopeMatched, scopeErr := s.noticeMatchesScope(filter.Scope, item)
+		if scopeErr != nil || !scopeMatched {
+			continue
+		}
 
 		filteredItems = append(filteredItems, item)
 	}
 
 	return filteredItems
+}
+
+func appendNoticeScopeFilter(query string, queryArgs []any, scope Scope) (string, []any) {
+	if !scope.RestrictToSelf || scope.TeacherID == 0 {
+		return query, queryArgs
+	}
+
+	query += ` AND (
+COALESCE(related_schedule_id, 0) IN (
+  SELECT id FROM class_schedules WHERE teacher_id = ?
+)
+OR COALESCE(related_class_id, 0) IN (
+  SELECT id FROM classes WHERE teacher_id = ?
+)
+OR id IN (
+  SELECT nt.notice_id
+  FROM notice_targets AS nt
+  JOIN classes AS c
+    ON c.id = nt.class_id
+  WHERE nt.target_type = 'class'
+    AND c.teacher_id = ?
+)
+OR id IN (
+  SELECT nt.notice_id
+  FROM notice_targets AS nt
+  JOIN class_students AS cs
+    ON cs.student_id = nt.student_id
+   AND cs.status = ?
+  JOIN classes AS c
+    ON c.id = cs.class_id
+  WHERE nt.target_type = 'student'
+    AND c.teacher_id = ?
+)
+)`
+
+	queryArgs = append(
+		queryArgs,
+		scope.TeacherID,
+		scope.TeacherID,
+		scope.TeacherID,
+		activeClassStudentStatus,
+		scope.TeacherID,
+	)
+
+	return query, queryArgs
+}
+
+func (s *Service) noticeMatchesScope(scope Scope, noticeItem NoticeItem) (bool, error) {
+	if !scope.RestrictToSelf {
+		return true, nil
+	}
+	if scope.TeacherID == 0 {
+		return false, nil
+	}
+
+	if noticeItem.RelatedScheduleID > 0 {
+		scheduleItem, scheduleFound, scheduleErr := s.Schedule(fmt.Sprintf("%d", noticeItem.RelatedScheduleID))
+		if scheduleErr != nil {
+			return false, scheduleErr
+		}
+		if scheduleFound && scheduleItem.TeacherID == scope.TeacherID {
+			return true, nil
+		}
+	}
+
+	if noticeItem.RelatedClassID > 0 {
+		classItem, classFound, classErr := s.Class(fmt.Sprintf("%d", noticeItem.RelatedClassID))
+		if classErr != nil {
+			return false, classErr
+		}
+		if classFound && classItem.TeacherID == scope.TeacherID {
+			return true, nil
+		}
+	}
+
+	return s.anyStudentBelongsToTeacher(noticeItem.StudentIDs, scope.TeacherID)
+}
+
+func (s *Service) NoticePayloadAccessible(input NoticePayload, scope Scope) (bool, error) {
+	if !scope.RestrictToSelf {
+		return true, nil
+	}
+	if scope.TeacherID == 0 {
+		return false, nil
+	}
+
+	hasScopedTarget := false
+	if input.RelatedScheduleID > 0 {
+		scheduleItem, found, scheduleErr := s.Schedule(fmt.Sprintf("%d", input.RelatedScheduleID))
+		if scheduleErr != nil {
+			return false, scheduleErr
+		}
+		if !found || scheduleItem.TeacherID != scope.TeacherID {
+			return false, nil
+		}
+		hasScopedTarget = true
+	}
+
+	if input.RelatedClassID > 0 {
+		classItem, found, classErr := s.Class(fmt.Sprintf("%d", input.RelatedClassID))
+		if classErr != nil {
+			return false, classErr
+		}
+		if !found || classItem.TeacherID != scope.TeacherID {
+			return false, nil
+		}
+		hasScopedTarget = true
+	}
+
+	if len(input.StudentIDs) > 0 {
+		allMatched, matchErr := s.allStudentsBelongToTeacher(input.StudentIDs, scope.TeacherID)
+		if matchErr != nil {
+			return false, matchErr
+		}
+		if !allMatched {
+			return false, nil
+		}
+		hasScopedTarget = true
+	}
+
+	return hasScopedTarget, nil
+}
+
+func (s *Service) StudentIDsAccessible(studentIDs []uint64, scope Scope) (bool, error) {
+	uniqueStudentIDs := uniqueUint64s(studentIDs)
+	if len(uniqueStudentIDs) == 0 || !scope.RestrictToSelf {
+		return true, nil
+	}
+	if scope.TeacherID == 0 {
+		return false, nil
+	}
+
+	return s.allStudentsBelongToTeacher(uniqueStudentIDs, scope.TeacherID)
+}
+
+func (s *Service) anyStudentBelongsToTeacher(studentIDs []uint64, teacherID uint64) (bool, error) {
+	if teacherID == 0 || len(studentIDs) == 0 {
+		return false, nil
+	}
+
+	if s.db == nil {
+		for _, studentID := range studentIDs {
+			classes := demo.StudentClasses(fmt.Sprintf("%d", studentID))
+			for _, classItem := range classes {
+				if uint64(classItem.TeacherID) == teacherID {
+					return true, nil
+				}
+			}
+		}
+
+		return false, nil
+	}
+
+	query := `
+SELECT cs.student_id
+FROM class_students AS cs
+JOIN classes AS c
+  ON c.id = cs.class_id
+WHERE cs.student_id IN ?
+  AND cs.status = ?
+  AND c.teacher_id = ?
+LIMIT 1
+`
+
+	type studentScopeRow struct {
+		StudentID uint64 `gorm:"column:student_id"`
+	}
+
+	var row studentScopeRow
+	findErr := s.db.Raw(query, studentIDs, activeClassStudentStatus, teacherID).Scan(&row).Error
+	if findErr != nil {
+		return false, findErr
+	}
+
+	return row.StudentID > 0, nil
+}
+
+func (s *Service) allStudentsBelongToTeacher(studentIDs []uint64, teacherID uint64) (bool, error) {
+	uniqueStudentIDs := uniqueUint64s(studentIDs)
+	if teacherID == 0 || len(uniqueStudentIDs) == 0 {
+		return false, nil
+	}
+
+	if s.db == nil {
+		for _, studentID := range uniqueStudentIDs {
+			classes := demo.StudentClasses(fmt.Sprintf("%d", studentID))
+			matched := false
+			for _, classItem := range classes {
+				if uint64(classItem.TeacherID) != teacherID {
+					continue
+				}
+				matched = true
+				break
+			}
+			if !matched {
+				return false, nil
+			}
+		}
+
+		return true, nil
+	}
+
+	type studentMatchRow struct {
+		StudentID uint64 `gorm:"column:student_id"`
+	}
+
+	var rows []studentMatchRow
+	query := `
+SELECT DISTINCT cs.student_id
+FROM class_students AS cs
+JOIN classes AS c
+  ON c.id = cs.class_id
+WHERE cs.student_id IN ?
+  AND cs.status = ?
+  AND c.teacher_id = ?
+`
+
+	listErr := s.db.Raw(query, uniqueStudentIDs, activeClassStudentStatus, teacherID).Scan(&rows).Error
+	if listErr != nil {
+		return false, listErr
+	}
+
+	matchedStudentIDs := make(map[uint64]struct{}, len(rows))
+	for _, row := range rows {
+		matchedStudentIDs[row.StudentID] = struct{}{}
+	}
+
+	for _, studentID := range uniqueStudentIDs {
+		if _, exists := matchedStudentIDs[studentID]; !exists {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+func matchesDateRange(targetDate string, dateFrom string, dateTo string) bool {
+	targetDate = strings.TrimSpace(targetDate)
+	dateFrom = strings.TrimSpace(dateFrom)
+	dateTo = strings.TrimSpace(dateTo)
+
+	if targetDate == "" {
+		return dateFrom == "" && dateTo == ""
+	}
+
+	if dateFrom != "" && targetDate < dateFrom {
+		return false
+	}
+
+	if dateTo != "" && targetDate > dateTo {
+		return false
+	}
+
+	return true
+}
+
+func noticeDateValue(rawValue string) string {
+	trimmedValue := strings.TrimSpace(rawValue)
+	if len(trimmedValue) >= len(dateLayout) {
+		return trimmedValue[:len(dateLayout)]
+	}
+
+	return trimmedValue
+}
+
+func cloneNoticeStudentIDs(source []uint64) []uint64 {
+	if len(source) == 0 {
+		return []uint64{}
+	}
+
+	items := make([]uint64, len(source))
+	copy(items, source)
+	return items
+}
+
+func noticeStudentIDsFromDemo(source []int) []uint64 {
+	if len(source) == 0 {
+		return []uint64{}
+	}
+
+	items := make([]uint64, 0, len(source))
+	for _, item := range source {
+		if item <= 0 {
+			continue
+		}
+		items = append(items, uint64(item))
+	}
+
+	return items
+}
+
+func demoNoticeStudentIDs(source []uint64) []int {
+	if len(source) == 0 {
+		return []int{}
+	}
+
+	items := make([]int, 0, len(source))
+	for _, item := range source {
+		if item == 0 {
+			continue
+		}
+		items = append(items, int(item))
+	}
+
+	return items
 }
 
 func noticeTargetItemsFromDemo(source []demo.NoticeTarget) []NoticeTargetItem {
@@ -5097,10 +6208,12 @@ func noticeTargetItemsFromDemo(source []demo.NoticeTarget) []NoticeTargetItem {
 	return items
 }
 
-func attendanceItemsFromDemo(source []demo.AttendanceItem) []AttendanceItem {
+func attendanceItemsFromDemo(rawScheduleID string, source []demo.AttendanceItem) []AttendanceItem {
 	items := make([]AttendanceItem, 0, len(source))
 	for _, item := range source {
+		recordID := attendanceRecordIDFromParts(rawScheduleID, uint64(item.StudentID))
 		items = append(items, AttendanceItem{
+			RecordID:     recordID,
 			StudentID:    uint64(item.StudentID),
 			StudentName:  item.StudentName,
 			Grade:        item.Grade,
@@ -5112,6 +6225,57 @@ func attendanceItemsFromDemo(source []demo.AttendanceItem) []AttendanceItem {
 		})
 	}
 	return items
+}
+
+func attendanceRecordIDFromParts(rawScheduleID string, studentID uint64) uint64 {
+	scheduleID, parseErr := strconv.ParseUint(strings.TrimSpace(rawScheduleID), 10, 64)
+	if parseErr != nil || scheduleID == 0 || studentID == 0 {
+		return 0
+	}
+
+	return attendanceRecordIDFromValues(scheduleID, studentID)
+}
+
+func attendanceRecordIDFromValues(scheduleID uint64, studentID uint64) uint64 {
+	if scheduleID == 0 || studentID == 0 {
+		return 0
+	}
+
+	return scheduleID*attendanceRecordSyntheticFactor + studentID
+}
+
+func attendanceRecordPartsFromID(recordID uint64) (uint64, uint64, bool) {
+	if recordID < attendanceRecordSyntheticFactor {
+		return 0, 0, false
+	}
+
+	scheduleID := recordID / attendanceRecordSyntheticFactor
+	studentID := recordID % attendanceRecordSyntheticFactor
+	if scheduleID == 0 || studentID == 0 {
+		return 0, 0, false
+	}
+
+	return scheduleID, studentID, true
+}
+
+func attendanceRecordItemFromAttendanceItem(scheduleItem ScheduleItem, attendanceItem AttendanceItem) AttendanceRecordItem {
+	return AttendanceRecordItem{
+		ID:           attendanceItem.RecordID,
+		ScheduleID:   scheduleItem.ID,
+		ClassID:      scheduleItem.ClassID,
+		ClassName:    scheduleItem.ClassName,
+		StudentID:    attendanceItem.StudentID,
+		StudentName:  attendanceItem.StudentName,
+		TeacherID:    scheduleItem.TeacherID,
+		TeacherName:  scheduleItem.TeacherName,
+		LessonDate:   scheduleItem.LessonDate,
+		LessonTime:   scheduleItem.LessonTime,
+		Status:       attendanceItem.Status,
+		Remark:       attendanceItem.Remark,
+		UpdatedBy:    attendanceItem.UpdatedBy,
+		UpdatedAt:    attendanceItem.UpdatedAt,
+		ParentMobile: attendanceItem.ParentMobile,
+	}
 }
 
 func homeworkItemsFromDemo(source []demo.Homework) []HomeworkItem {
@@ -5432,77 +6596,6 @@ func normalizeHomeworkStatus(status string) string {
 	}
 }
 
-func matchesDateRange(targetDate string, dateFrom string, dateTo string) bool {
-	targetDate = strings.TrimSpace(targetDate)
-	dateFrom = strings.TrimSpace(dateFrom)
-	dateTo = strings.TrimSpace(dateTo)
-
-	if targetDate == "" {
-		return dateFrom == "" && dateTo == ""
-	}
-
-	if dateFrom != "" && targetDate < dateFrom {
-		return false
-	}
-
-	if dateTo != "" && targetDate > dateTo {
-		return false
-	}
-
-	return true
-}
-
-func noticeDateValue(rawValue string) string {
-	trimmedValue := strings.TrimSpace(rawValue)
-	if len(trimmedValue) >= len(dateLayout) {
-		return trimmedValue[:len(dateLayout)]
-	}
-
-	return trimmedValue
-}
-
-func cloneNoticeStudentIDs(source []uint64) []uint64 {
-	if len(source) == 0 {
-		return []uint64{}
-	}
-
-	items := make([]uint64, len(source))
-	copy(items, source)
-	return items
-}
-
-func noticeStudentIDsFromDemo(source []int) []uint64 {
-	if len(source) == 0 {
-		return []uint64{}
-	}
-
-	items := make([]uint64, 0, len(source))
-	for _, item := range source {
-		if item <= 0 {
-			continue
-		}
-		items = append(items, uint64(item))
-	}
-
-	return items
-}
-
-func demoNoticeStudentIDs(source []uint64) []int {
-	if len(source) == 0 {
-		return []int{}
-	}
-
-	items := make([]int, 0, len(source))
-	for _, item := range source {
-		if item == 0 {
-			continue
-		}
-		items = append(items, int(item))
-	}
-
-	return items
-}
-
 func guardianRelationFromName(name string) string {
 	switch {
 	case strings.Contains(name, "先生"):
@@ -5512,6 +6605,185 @@ func guardianRelationFromName(name string) string {
 	default:
 		return "家长"
 	}
+}
+
+func (s *Service) teacherQuery(filter TeacherFilter) *gorm.DB {
+	teacherQuery := s.db.Table("teachers AS t").
+		Select(`
+t.id,
+COALESCE(t.user_id, 0) AS user_id,
+COALESCE(u.display_name, '') AS user_name,
+t.name,
+COALESCE(t.mobile, '') AS mobile,
+COALESCE(t.title, '') AS title,
+COALESCE(t.main_subject, '') AS main_subject,
+COALESCE(t.employment_type, '') AS employment_type,
+COALESCE(t.weekly_hours, 0) AS weekly_hours,
+COALESCE(t.campus, '') AS campus,
+COALESCE(t.status, '') AS status,
+COALESCE(t.remark, '') AS remark
+`).
+		Joins("LEFT JOIN users AS u ON u.id = t.user_id")
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		teacherQuery = teacherQuery.Where(
+			`(t.name LIKE ? OR COALESCE(t.title, '') LIKE ? OR COALESCE(t.main_subject, '') LIKE ? OR COALESCE(t.mobile, '') LIKE ? OR COALESCE(t.campus, '') LIKE ? OR COALESCE(t.remark, '') LIKE ? OR COALESCE(u.display_name, '') LIKE ? OR COALESCE(u.username, '') LIKE ?)`,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		teacherQuery = teacherQuery.Where("t.status = ?", status)
+	}
+
+	employmentType := strings.TrimSpace(filter.EmploymentType)
+	if employmentType != "" {
+		teacherQuery = teacherQuery.Where("t.employment_type = ?", employmentType)
+	}
+
+	campus := strings.TrimSpace(filter.Campus)
+	if campus != "" {
+		teacherQuery = teacherQuery.Where("t.campus = ?", campus)
+	}
+
+	return teacherQuery
+}
+
+func (s *Service) studentQuery(filter StudentFilter) *gorm.DB {
+	studentQuery := s.db.Table("students AS s").
+		Select(`
+s.id,
+s.name,
+s.grade_name AS grade,
+COALESCE(g.name, '') AS parent_name,
+COALESCE(g.mobile, '') AS parent_mobile,
+s.campus,
+COALESCE(cs.class_id, 0) AS class_id,
+COALESCE(c.name, '') AS class_name,
+s.remaining_hours,
+s.status
+`).
+		Joins("LEFT JOIN student_guardians AS g ON g.student_id = s.id AND g.is_primary = 1").
+		Joins(`
+LEFT JOIN (
+  SELECT student_id, MIN(class_id) AS class_id
+  FROM class_students
+  WHERE status = ?
+  GROUP BY student_id
+) AS cs ON cs.student_id = s.id
+`, activeClassStudentStatus).
+		Joins("LEFT JOIN classes AS c ON c.id = cs.class_id")
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		studentQuery = studentQuery.Where(
+			"(s.name LIKE ? OR s.grade_name LIKE ? OR COALESCE(g.name, '') LIKE ? OR COALESCE(g.mobile, '') LIKE ?)",
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		studentQuery = studentQuery.Where("s.status = ?", status)
+	}
+
+	if filter.ClassID > 0 {
+		studentQuery = studentQuery.Where(
+			`EXISTS (
+  SELECT 1
+  FROM class_students AS filter_cs
+  WHERE filter_cs.student_id = s.id
+    AND filter_cs.class_id = ?
+    AND filter_cs.status = ?
+)`,
+			filter.ClassID,
+			activeClassStudentStatus,
+		)
+	}
+
+	return studentQuery
+}
+
+func (s *Service) classQuery(filter ClassFilter) *gorm.DB {
+	classQuery := s.db.Table("classes AS c").
+		Select(`
+c.id,
+c.course_id,
+c.name,
+COALESCE(co.name, '') AS course_name,
+c.teacher_id,
+COALESCE(t.name, '') AS teacher_name,
+c.campus,
+COUNT(cs.id) AS student_count,
+c.capacity,
+c.weekly_schedule,
+COALESCE(DATE_FORMAT(c.start_date, '%Y-%m-%d'), '') AS start_date,
+COALESCE(DATE_FORMAT(c.end_date, '%Y-%m-%d'), '') AS end_date,
+c.status,
+COALESCE(c.remark, '') AS remark
+`).
+		Joins("LEFT JOIN courses AS co ON co.id = c.course_id").
+		Joins("LEFT JOIN teachers AS t ON t.id = c.teacher_id").
+		Joins("LEFT JOIN class_students AS cs ON cs.class_id = c.id AND cs.status = ?", activeClassStudentStatus)
+
+	keyword := strings.TrimSpace(filter.Keyword)
+	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
+		classQuery = classQuery.Where(
+			"(c.name LIKE ? OR COALESCE(co.name, '') LIKE ? OR COALESCE(t.name, '') LIKE ? OR COALESCE(c.campus, '') LIKE ?)",
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+			likeKeyword,
+		)
+	}
+
+	status := strings.TrimSpace(filter.Status)
+	if status != "" {
+		classQuery = classQuery.Where("c.status = ?", status)
+	}
+
+	if filter.CourseID > 0 {
+		classQuery = classQuery.Where("c.course_id = ?", filter.CourseID)
+	}
+
+	if filter.TeacherID > 0 {
+		classQuery = classQuery.Where("c.teacher_id = ?", filter.TeacherID)
+	}
+
+	if filter.Scope.RestrictToSelf && filter.Scope.TeacherID > 0 {
+		classQuery = classQuery.Where("c.teacher_id = ?", filter.Scope.TeacherID)
+	}
+
+	return classQuery.Group(`
+c.id,
+c.course_id,
+c.name,
+co.name,
+c.teacher_id,
+t.name,
+c.campus,
+c.capacity,
+c.weekly_schedule,
+c.start_date,
+c.end_date,
+c.status,
+c.remark
+`)
 }
 
 func (s *Service) courseQuery(filter CourseFilter) *gorm.DB {
@@ -5582,6 +6854,72 @@ func formatDateTime(value *time.Time) string {
 	return value.Format(dateTimeLayout)
 }
 
+func matchesStudentKeyword(item StudentItem, keyword string) bool {
+	return strings.Contains(item.Name, keyword) ||
+		strings.Contains(item.Grade, keyword) ||
+		strings.Contains(item.ParentName, keyword) ||
+		strings.Contains(item.ParentMobile, keyword)
+}
+
+func matchesClassKeyword(item ClassItem, keyword string) bool {
+	return strings.Contains(item.Name, keyword) ||
+		strings.Contains(item.CourseName, keyword) ||
+		strings.Contains(item.TeacherName, keyword) ||
+		strings.Contains(item.Campus, keyword)
+}
+
+func matchesTeacherKeyword(item TeacherItem, keyword string) bool {
+	return strings.Contains(item.Name, keyword) ||
+		strings.Contains(item.Title, keyword) ||
+		strings.Contains(item.MainSubject, keyword) ||
+		strings.Contains(item.Mobile, keyword) ||
+		strings.Contains(item.Campus, keyword) ||
+		strings.Contains(item.Remark, keyword) ||
+		strings.Contains(item.UserName, keyword)
+}
+
+func optionalUint64Pointer(value uint64) *uint64 {
+	if value == 0 {
+		return nil
+	}
+
+	pointerValue := value
+	return &pointerValue
+}
+
+func uint64Pointer(value uint64) *uint64 {
+	pointerValue := value
+	return &pointerValue
+}
+
+func demoTeacherUserID(teacherID int) uint64 {
+	switch teacherID {
+	case 1:
+		return 4
+	default:
+		return 0
+	}
+}
+
+func demoTeacherUserName(userID uint64) string {
+	switch userID {
+	case 4:
+		return "周老师"
+	default:
+		return ""
+	}
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+
+	return false
+}
+
 func parseOptionalDate(raw string) (*time.Time, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -5617,4 +6955,46 @@ func datePointer(value time.Time) *time.Time {
 
 func startOfDay(value time.Time) time.Time {
 	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, value.Location())
+}
+
+func hasOperator(operator Operator) bool {
+	return operator.UserID > 0 || strings.TrimSpace(operator.DisplayName) != ""
+}
+
+func operationUserID(operator Operator) uint64 {
+	if operator.UserID > 0 {
+		return operator.UserID
+	}
+
+	return 1
+}
+
+func operationDisplayName(operator Operator, fallback string) string {
+	displayName := strings.TrimSpace(operator.DisplayName)
+	if displayName != "" {
+		return displayName
+	}
+
+	displayName = strings.TrimSpace(fallback)
+	if displayName != "" {
+		return displayName
+	}
+
+	return "系统管理员"
+}
+
+func (s *Service) recordBusinessOperationTx(
+	tx *gorm.DB,
+	operator Operator,
+	module string,
+	action string,
+	targetType string,
+	targetID uint64,
+	content string,
+) error {
+	if !hasOperator(operator) {
+		return nil
+	}
+
+	return s.recordOperationTx(tx, operator, module, action, targetType, targetID, content)
 }

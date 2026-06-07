@@ -23,14 +23,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) list(c *gin.Context) {
-	currentPermissions, exists := c.Get("current_permissions")
-	if !exists {
-		response.Forbidden(c)
-		return
-	}
-
-	permissionList, ok := currentPermissions.([]string)
-	if !ok || !permission.Has(permissionList, "operation_logs:view") {
+	if !permission.HasFromContext(c, "operation_logs:view") {
 		response.Forbidden(c)
 		return
 	}
@@ -44,6 +37,7 @@ func (h *Handler) list(c *gin.Context) {
 	logs, logErr := h.service.OperationLogsWithFilter(eduservice.OperationLogFilter{
 		UserID:   userID,
 		Module:   strings.TrimSpace(c.Query("module")),
+		Action:   strings.TrimSpace(c.Query("action")),
 		DateFrom: strings.TrimSpace(c.Query("dateFrom")),
 		DateTo:   strings.TrimSpace(c.Query("dateTo")),
 	})

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"edu-admin/internal/app/permission"
@@ -43,7 +44,17 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	users, userErr := h.service.Users()
+	roleID, roleErr := parseUserUintParam(c.Query("roleId"))
+	if roleErr != nil {
+		response.Failed(c, 400, "role id is invalid")
+		return
+	}
+
+	users, userErr := h.service.UsersWithFilter(eduservice.UserFilter{
+		Keyword: strings.TrimSpace(c.Query("keyword")),
+		Status:  strings.TrimSpace(c.Query("status")),
+		RoleID:  roleID,
+	})
 	if userErr != nil {
 		response.InternalServerError(c)
 		return
@@ -228,4 +239,13 @@ func handleUserServiceError(c *gin.Context, serviceErr error) {
 	default:
 		response.InternalServerError(c)
 	}
+}
+
+func parseUserUintParam(rawValue string) (uint64, error) {
+	trimmedValue := strings.TrimSpace(rawValue)
+	if trimmedValue == "" {
+		return 0, nil
+	}
+
+	return strconv.ParseUint(trimmedValue, 10, 64)
 }

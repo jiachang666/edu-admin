@@ -45,6 +45,12 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	classID, classErr := parseNoticeUintParam(c.Query("classId"))
 	if classErr != nil {
 		response.Failed(c, 400, "class id is invalid")
@@ -58,6 +64,7 @@ func (h *Handler) list(c *gin.Context) {
 		Date:       strings.TrimSpace(c.Query("date")),
 		DateFrom:   strings.TrimSpace(c.Query("dateFrom")),
 		DateTo:     strings.TrimSpace(c.Query("dateTo")),
+		Scope:      scope,
 	})
 	if noticeErr != nil {
 		response.InternalServerError(c)
@@ -73,8 +80,24 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	input, ok := bindNoticePayload(c)
 	if !ok {
+		return
+	}
+
+	accessible, accessErr := h.service.NoticePayloadAccessible(input, scope)
+	if accessErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !accessible {
+		response.Failed(c, 404, "notice target not found")
 		return
 	}
 
@@ -93,6 +116,12 @@ func (h *Handler) detail(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
 	notice, found, noticeErr := h.service.Notice(c.Param("id"))
 	if noticeErr != nil {
 		response.InternalServerError(c)
@@ -100,6 +129,15 @@ func (h *Handler) detail(c *gin.Context) {
 	}
 	if !found {
 		response.Success(c, gin.H{"id": c.Param("id")})
+		return
+	}
+	accessible, accessErr := h.service.NoticeAccessible(c.Param("id"), scope)
+	if accessErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !accessible {
+		response.Failed(c, 404, "notice not found")
 		return
 	}
 
@@ -112,8 +150,34 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	accessible, accessErr := h.service.NoticeAccessible(c.Param("id"), scope)
+	if accessErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !accessible {
+		response.Failed(c, 404, "notice not found")
+		return
+	}
+
 	input, ok := bindNoticePayload(c)
 	if !ok {
+		return
+	}
+
+	targetAccessible, targetErr := h.service.NoticePayloadAccessible(input, scope)
+	if targetErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !targetAccessible {
+		response.Failed(c, 404, "notice target not found")
 		return
 	}
 
@@ -136,6 +200,22 @@ func (h *Handler) send(c *gin.Context) {
 		return
 	}
 
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	accessible, accessErr := h.service.NoticeAccessible(c.Param("id"), scope)
+	if accessErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !accessible {
+		response.Failed(c, 404, "notice not found")
+		return
+	}
+
 	sentItem, found, sendErr := h.service.SendNotice(c.Param("id"), currentOperator(c))
 	if sendErr != nil {
 		response.InternalServerError(c)
@@ -152,6 +232,22 @@ func (h *Handler) send(c *gin.Context) {
 func (h *Handler) targets(c *gin.Context) {
 	if !permission.HasFromContext(c, "notices:view") {
 		response.Forbidden(c)
+		return
+	}
+
+	scope, scopeErr := h.service.ScopeForUser(c.GetUint64("current_user_id"), c.GetString("current_role"))
+	if scopeErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+
+	accessible, accessErr := h.service.NoticeAccessible(c.Param("id"), scope)
+	if accessErr != nil {
+		response.InternalServerError(c)
+		return
+	}
+	if !accessible {
+		response.Failed(c, 404, "notice not found")
 		return
 	}
 

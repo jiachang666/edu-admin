@@ -2,8 +2,16 @@ package response
 
 import (
 	"reflect"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	defaultPage     = 1
+	defaultPageSize = 20
+	maxPageSize     = 100
 )
 
 func Success(c *gin.Context, data any) {
@@ -53,19 +61,64 @@ func NotImplemented(c *gin.Context) {
 }
 
 func Paginated(c *gin.Context, list any) {
-	total := 0
-	value := reflect.ValueOf(list)
-	if value.IsValid() {
-		switch value.Kind() {
-		case reflect.Array, reflect.Slice:
-			total = value.Len()
-		}
+	page := parsePaginationInt(c.Query("page"), defaultPage)
+	pageSize := parsePaginationInt(c.Query("pageSize"), defaultPageSize)
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
 	}
 
+	total, paginatedList := paginateList(list, page, pageSize)
+
 	Success(c, gin.H{
-		"list":     list,
+		"list":     paginatedList,
 		"total":    total,
-		"page":     1,
-		"pageSize": 20,
+		"page":     page,
+		"pageSize": pageSize,
 	})
+}
+
+func parsePaginationInt(rawValue string, fallback int) int {
+	trimmedValue := strings.TrimSpace(rawValue)
+	if trimmedValue == "" {
+		return fallback
+	}
+
+	parsedValue, parseErr := strconv.Atoi(trimmedValue)
+	if parseErr != nil || parsedValue <= 0 {
+		return fallback
+	}
+
+	return parsedValue
+}
+
+func paginateList(list any, page int, pageSize int) (int, any) {
+	value := reflect.ValueOf(list)
+	if !value.IsValid() {
+		return 0, list
+	}
+
+	switch value.Kind() {
+	case reflect.Array:
+		value = value.Slice(0, value.Len())
+	case reflect.Slice:
+	default:
+		return 0, list
+	}
+
+	total := value.Len()
+	if total == 0 {
+		return 0, list
+	}
+
+	startIndex := (page - 1) * pageSize
+	if startIndex >= total {
+		return total, value.Slice(0, 0).Interface()
+	}
+
+	endIndex := startIndex + pageSize
+	if endIndex > total {
+		endIndex = total
+	}
+
+	return total, value.Slice(startIndex, endIndex).Interface()
 }

@@ -4,6 +4,7 @@ import (
 	"edu-admin/internal/app/permission"
 	"edu-admin/internal/app/response"
 	eduservice "edu-admin/internal/modules/edu/service"
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,7 @@ type Handler struct {
 }
 
 type teacherPayload struct {
+	UserID         uint64 `json:"userId"`
 	Name           string `json:"name"`
 	Mobile         string `json:"mobile"`
 	Title          string `json:"title"`
@@ -43,7 +45,12 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	teachers, teacherErr := h.service.Teachers()
+	teachers, teacherErr := h.service.TeachersWithFilter(eduservice.TeacherFilter{
+		Keyword:        strings.TrimSpace(c.Query("keyword")),
+		Status:         strings.TrimSpace(c.Query("status")),
+		EmploymentType: strings.TrimSpace(c.Query("employmentType")),
+		Campus:         strings.TrimSpace(c.Query("campus")),
+	})
 	if teacherErr != nil {
 		response.InternalServerError(c)
 		return
@@ -65,7 +72,7 @@ func (h *Handler) create(c *gin.Context) {
 
 	createdItem, createErr := h.service.CreateTeacher(input, currentOperator(c))
 	if createErr != nil {
-		response.InternalServerError(c)
+		handleTeacherServiceError(c, createErr)
 		return
 	}
 
@@ -119,7 +126,7 @@ func (h *Handler) update(c *gin.Context) {
 
 	updatedItem, found, updateErr := h.service.UpdateTeacher(c.Param("id"), input, currentOperator(c))
 	if updateErr != nil {
-		response.InternalServerError(c)
+		handleTeacherServiceError(c, updateErr)
 		return
 	}
 	if !found {
@@ -139,6 +146,7 @@ func bindTeacherPayload(c *gin.Context) (eduservice.TeacherPayload, bool) {
 	}
 
 	input := eduservice.TeacherPayload{
+		UserID:         payload.UserID,
 		Name:           strings.TrimSpace(payload.Name),
 		Mobile:         strings.TrimSpace(payload.Mobile),
 		Title:          strings.TrimSpace(payload.Title),
@@ -183,6 +191,19 @@ func validateTeacherPayload(input eduservice.TeacherPayload) string {
 	}
 
 	return ""
+}
+
+func handleTeacherServiceError(c *gin.Context, serviceErr error) {
+	switch {
+	case errors.Is(serviceErr, eduservice.ErrTeacherUserNotFound):
+		response.Failed(c, 400, "关联账号不存在")
+	case errors.Is(serviceErr, eduservice.ErrTeacherUserRoleInvalid):
+		response.Failed(c, 400, "只能关联老师角色账号")
+	case errors.Is(serviceErr, eduservice.ErrTeacherUserAlreadyBound):
+		response.Failed(c, 400, "该账号已绑定其他老师")
+	default:
+		response.InternalServerError(c)
+	}
 }
 
 func currentOperator(c *gin.Context) eduservice.Operator {
